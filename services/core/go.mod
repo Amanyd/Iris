@@ -13,3 +13,5 @@ require (
 	github.com/sashabaranov/go-openai v1.26.2
 	golang.org/x/crypto v0.24.0
 )
+
+replace github.com/eulerbutcooler/iris/packages => ../../packages
