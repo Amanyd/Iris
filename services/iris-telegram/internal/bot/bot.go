@@ -3,12 +3,15 @@ package bot
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/eulerbutcooler/iris/services/iris-telegram/internal/ai"
 	irisClient "github.com/eulerbutcooler/iris/services/iris-telegram/internal/iris"
+	"github.com/eulerbutcooler/iris/services/iris-telegram/internal/stt"
 	"github.com/eulerbutcooler/iris/services/iris-telegram/internal/store"
 )
 
@@ -19,16 +22,19 @@ type Bot struct {
 	ai       *ai.Client
 	iris     *irisClient.Client
 	store    *store.Store
+	stt      *stt.Client // nil when ElevenLabs key is not configured
 	log      *slog.Logger
 }
 
 // New creates a Bot with all dependencies.
+// sttClient may be nil — voice notes are then rejected with a friendly message.
 func New(
 	botToken string,
 	sessions *SessionManager,
 	aiClient *ai.Client,
 	iris *irisClient.Client,
 	store *store.Store,
+	sttClient *stt.Client,
 	log *slog.Logger,
 ) (*Bot, error) {
 	api, err := tgbotapi.NewBotAPI(botToken)
@@ -37,7 +43,7 @@ func New(
 	}
 
 	log.Info("telegram bot authorized", "username", api.Self.UserName)
-	return &Bot{api: api, sessions: sessions, ai: aiClient, iris: iris, store: store, log: log}, nil
+	return &Bot{api: api, sessions: sessions, ai: aiClient, iris: iris, store: store, stt: sttClient, log: log}, nil
 }
 
 // Start begins polling for Telegram updates until ctx is cancelled.
@@ -87,8 +93,14 @@ func (b *Bot) handleUpdate(ctx context.Context, update tgbotapi.Update) {
 	msg := update.Message
 	userID := msg.From.ID
 	chatID := msg.Chat.ID
-	text := strings.TrimSpace(msg.Text)
 
+	// ── Voice note → STT ──────────────────────────────────────────────────────
+	if msg.Voice != nil {
+		b.handleVoice(ctx, chatID, userID, msg.Voice)
+		return
+	}
+
+	text := strings.TrimSpace(msg.Text)
 	if text == "" {
 		return
 	}
@@ -100,6 +112,73 @@ func (b *Bot) handleUpdate(ctx context.Context, update tgbotapi.Update) {
 	} else {
 		b.dispatchMessage(ctx, chatID, userID, text)
 	}
+}
+
+// handleVoice downloads the voice note OGG, transcribes it via ElevenLabs,
+// and feeds the transcript into the normal message dispatch flow.
+func (b *Bot) handleVoice(ctx context.Context, chatID, userID int64, voice *tgbotapi.Voice) {
+	if b.stt == nil {
+		b.Send(chatID, "🎤 Voice notes are not enabled. Ask your admin to set ELEVENLABS_API_KEY.")
+		return
+	}
+
+	// Let the user know we're processing
+	b.Send(chatID, "🎤 _Transcribing your voice note…_")
+
+	// Get the file download URL from Telegram
+	fileConfig := tgbotapi.FileConfig{FileID: voice.FileID}
+	file, err := b.api.GetFile(fileConfig)
+	if err != nil {
+		b.log.Error("voice: get file info", "err", err)
+		b.Send(chatID, "❌ Could not retrieve your voice note. Please try again.")
+		return
+	}
+
+	downloadURL := file.Link(b.api.Token)
+	audioBytes, err := downloadFile(ctx, downloadURL)
+	if err != nil {
+		b.log.Error("voice: download file", "err", err)
+		b.Send(chatID, "❌ Could not download your voice note. Please try again.")
+		return
+	}
+
+	// Transcribe — Telegram voice notes are always OGG/Opus
+	transcript, err := b.stt.Transcribe(ctx, audioBytes, "voice.ogg")
+	if err != nil {
+		b.log.Error("voice: transcribe", "err", err)
+		b.Send(chatID, "❌ Could not transcribe your voice note. Please type your message instead.")
+		return
+	}
+
+	b.log.Info("voice: transcribed", "user_id", userID, "transcript", transcript[:min(len(transcript), 120)])
+
+	// Echo what we heard so the user can verify
+	b.Send(chatID, fmt.Sprintf("🎤 *Heard:* _%s_", transcript))
+
+	// Feed the transcript into the normal message flow
+	if strings.HasPrefix(strings.TrimSpace(transcript), "/") {
+		// If the user dictated a command (unlikely but handle gracefully)
+		b.Send(chatID, "ℹ️ Commands must be typed, not spoken. Please type /new, /list etc.")
+		return
+	}
+	b.dispatchMessage(ctx, chatID, userID, transcript)
+}
+
+// downloadFile fetches a URL and returns its bytes. Used for Telegram file downloads.
+func downloadFile(ctx context.Context, url string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("download: build request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("download: http get: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("download: status %d", resp.StatusCode)
+	}
+	return io.ReadAll(resp.Body)
 }
 
 // dispatchCommand routes bot commands.

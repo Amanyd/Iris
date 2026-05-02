@@ -16,6 +16,7 @@ type Config struct {
 	DatabaseURL      string        // for telegram_links table
 	NATSURL          string        // for execution notifications
 	SessionTTL       time.Duration // default 24h
+	ElevenLabsAPIKey string        // optional: enables voice-note STT via ElevenLabs Scribe
 }
 
 // Load reads config from environment variables.
@@ -29,6 +30,7 @@ func Load() (*Config, error) {
 		DatabaseURL:      os.Getenv("DATABASE_URL"),
 		NATSURL:          getEnv("NATS_URL", "nats://localhost:4222"),
 		SessionTTL:       getEnvDuration("SESSION_TTL", 24*time.Hour),
+		ElevenLabsAPIKey: os.Getenv("ELEVENLABS_API_KEY"), // optional
 	}
 	return cfg, cfg.validate()
 }

@@ -63,8 +63,10 @@ func NewRouter(h *Handler, cfg *config.Config) *chi.Mux {
 			r.Post("/secrets", h.CreateSecret)
 			r.Delete("/secrets/{id}", h.DeleteSecret)
 
-			// AI relay generation
+			// AI relay generation + STT transcription
 			r.Post("/ai/relay", h.GenerateRelay)
+			r.Post("/ai/transcribe", h.TranscribeAudio)
+
 		})
 	})
 

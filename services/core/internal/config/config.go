@@ -25,6 +25,9 @@ type Config struct {
 	LLMProvider string // "openai" | "gemini"
 	LLMAPIKey   string
 	LLMModel    string
+
+	// ElevenLabs (optional — for the /ai/transcribe STT endpoint)
+	ElevenLabsAPIKey string
 }
 
 // Load reads config from environment variables and validates required fields.
@@ -41,6 +44,8 @@ func Load() (*Config, error) {
 		LLMProvider: getEnv("LLM_PROVIDER", "openai"),
 		LLMAPIKey:   os.Getenv("LLM_API_KEY"),
 		LLMModel:    getEnv("LLM_MODEL", "gpt-4o-mini"),
+
+		ElevenLabsAPIKey: os.Getenv("ELEVENLABS_API_KEY"), // optional
 	}
 
 	return cfg, cfg.validate()

@@ -3,10 +3,32 @@
 import {
   Terminal, Send, Cpu, User, Loader2, Rocket, RefreshCw,
   GitBranch, Zap, Clock, Play, CheckCircle2,
-  ChevronDown, ChevronUp, X, Pencil,
+  ChevronDown, ChevronUp, X, Pencil, Mic, MicOff,
 } from "lucide-react";
 import { useState, useRef, useEffect, useCallback } from "react";
 import * as api from "@/lib/api";
+
+// ─── Web Speech API types (not in lib.dom.d.ts for older TS targets) ──────────
+interface SpeechRecognition extends EventTarget {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  start(): void;
+  stop(): void;
+  onresult: ((e: SpeechRecognitionEvent) => void) | null;
+  onerror: ((e: Event) => void) | null;
+  onend: (() => void) | null;
+}
+interface SpeechRecognitionEvent extends Event {
+  resultIndex: number;
+  results: SpeechRecognitionResultList;
+}
+declare global {
+  interface Window {
+    SpeechRecognition: new () => SpeechRecognition;
+    webkitSpeechRecognition: new () => SpeechRecognition;
+  }
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -199,12 +221,151 @@ function MessageBubble({
   );
 }
 
-// ─── Main AIChat ──────────────────────────────────────────────────────────────
+
+// ─── Default messages ─────────────────────────────────────────────────────────
 
 const DEFAULT_MESSAGES: ChatMessage[] = [{
   role: "assistant",
   content: "System initialized. Describe the workflow you want to automate.\n\nTo edit an existing relay, select it from the dropdown — or just ask me by name.",
 }];
+
+// ─── Voice input hook ─────────────────────────────────────────────────────────
+
+type VoiceState = "idle" | "listening" | "transcribing";
+
+function useVoiceInput(onResult: (text: string) => void) {
+  const [voiceState, setVoiceState] = useState<VoiceState>("idle");
+  // interimText: what the recogniser is still processing (unsettled)
+  const [interimText, setInterimText] = useState("");
+  // transcriptSoFar: words the recogniser has committed this session
+  const [transcriptSoFar, setTranscriptSoFar] = useState("");
+
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const shouldRestartRef = useRef(false); // keeps recognition alive through silence
+
+  const hasSpeechAPI = typeof window !== "undefined" &&
+    !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+
+  const stopAll = useCallback(() => {
+    shouldRestartRef.current = false;
+    recognitionRef.current?.stop();
+    recognitionRef.current = null;
+    if (mediaRecorderRef.current?.state !== "inactive") {
+      mediaRecorderRef.current?.stop();
+    }
+    mediaRecorderRef.current = null;
+    chunksRef.current = [];
+    setInterimText("");
+    setTranscriptSoFar("");
+    setVoiceState("idle");
+  }, []);
+
+  const startRecognition = useCallback((accumulatedSoFar: string) => {
+    if (!window.SpeechRecognition && !window.webkitSpeechRecognition) return;
+    const SpeechRec = window.SpeechRecognition ?? window.webkitSpeechRecognition;
+    const rec = new SpeechRec();
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.lang = "en-US";
+
+    rec.onresult = (e: SpeechRecognitionEvent) => {
+      let interim = "";
+      let finalChunk = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) finalChunk += t;
+        else interim += t;
+      }
+      if (interim) setInterimText(interim);
+      if (finalChunk) {
+        const newAccum = (accumulatedSoFar + " " + finalChunk).trim();
+        accumulatedSoFar = newAccum; // update local var for closure
+        setTranscriptSoFar(newAccum);
+        setInterimText("");
+      }
+    };
+
+    rec.onerror = (e: Event) => {
+      // "no-speech" is normal — just let onend restart it
+      const err = (e as Event & { error?: string }).error;
+      if (err === "not-allowed" || err === "service-not-allowed") {
+        shouldRestartRef.current = false;
+        setVoiceState("idle");
+      }
+    };
+
+    rec.onend = () => {
+      // If user hasn't manually stopped, restart to keep listening through silences
+      if (shouldRestartRef.current) {
+        startRecognition(accumulatedSoFar);
+      } else {
+        // User stopped — commit whatever we have
+        if (accumulatedSoFar) onResult(accumulatedSoFar.trim());
+        setInterimText("");
+        setTranscriptSoFar("");
+        setVoiceState("idle");
+      }
+    };
+
+    recognitionRef.current = rec;
+    rec.start();
+  }, [onResult]);
+
+  const startListening = useCallback(async () => {
+    if (voiceState !== "idle") {
+      // Stop and commit
+      shouldRestartRef.current = false;
+      recognitionRef.current?.stop();
+      recognitionRef.current = null;
+      return;
+    }
+
+    setTranscriptSoFar("");
+    setInterimText("");
+
+    // ── Strategy 1: Web Speech API ────────────────────────────────────────
+    if (hasSpeechAPI) {
+      shouldRestartRef.current = true;
+      setVoiceState("listening");
+      startRecognition("");
+      return;
+    }
+
+    // ── Strategy 2: MediaRecorder → ElevenLabs ────────────────────────────
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mr = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
+      chunksRef.current = [];
+
+      mr.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+      mr.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop());
+        setVoiceState("transcribing");
+        try {
+          const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+          const text = await api.transcribeAudio(blob);
+          if (text) onResult(text.trim());
+        } catch { /* silent */ }
+        finally { setVoiceState("idle"); setInterimText(""); setTranscriptSoFar(""); }
+      };
+
+      mr.start();
+      mediaRecorderRef.current = mr;
+      setVoiceState("listening");
+    } catch {
+      setVoiceState("idle");
+    }
+  }, [voiceState, hasSpeechAPI, startRecognition, onResult]);
+
+  // Clean up on unmount
+  useEffect(() => () => { shouldRestartRef.current = false; stopAll(); }, [stopAll]);
+
+  return { voiceState, interimText, transcriptSoFar, startListening, stopAll, hasSpeechAPI };
+}
+
+// ─── Main AIChat ──────────────────────────────────────────────────────────────
 
 export function AIChat() {
   // ── State — initialised from localStorage if available ────────────────────
@@ -221,6 +382,14 @@ export function AIChat() {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // ── Voice input ───────────────────────────────────────────────────────────
+  const handleVoiceResult = useCallback((text: string) => {
+    setInput(prev => (prev ? prev + " " + text : text));
+    inputRef.current?.focus();
+  }, []);
+
+  const { voiceState, interimText, transcriptSoFar, startListening, stopAll, hasSpeechAPI } = useVoiceInput(handleVoiceResult);
 
   // ── Hydrate from localStorage on first mount ───────────────────────────────
   useEffect(() => {
@@ -260,24 +429,18 @@ export function AIChat() {
     setConversation([]);
     const relay = relays.find(r => r.id === relayId);
     const newMsg: ChatMessage = relayId
-      ? {
-          role: "assistant",
-          content: `Editing mode: "${relay?.name ?? relayId}"\n\nWhat would you like to change?`,
-        }
-      : {
-          role: "assistant",
-          content: "Switched to create mode. Describe the workflow you want to automate.",
-        };
+      ? { role: "assistant", content: `Editing mode: "${relay?.name ?? relayId}"\n\nWhat would you like to change?` }
+      : { role: "assistant", content: "Switched to create mode. Describe the workflow you want to automate." };
     setMessages([newMsg]);
   }, [relays]);
 
   // ── Send ──────────────────────────────────────────────────────────────────
   const handleSend = useCallback(async () => {
     if (!input.trim() || loading) return;
+    stopAll(); // stop any active recording before sending
     const userMsg = input.trim();
     setInput("");
-    const newUserMsg: ChatMessage = { role: "user", content: userMsg };
-    setMessages(prev => [...prev, newUserMsg]);
+    setMessages(prev => [...prev, { role: "user", content: userMsg }]);
     setLoading(true);
 
     try {
@@ -295,17 +458,11 @@ export function AIChat() {
       }
       if (!replyText) replyText = "Ready. What would you like to automate?";
 
-      // Resolve final target relay id:
-      // AI response relay_id > explicit selector relay_id > none (create)
       const targetRelayId = res.relay_id || selectedRelayId || undefined;
-
       const assistantMsg: ChatMessage = {
-        role: "assistant",
-        content: replyText,
-        relaySpec: res.ready && res.relay ? res.relay : null,
-        targetRelayId,
+        role: "assistant", content: replyText,
+        relaySpec: res.ready && res.relay ? res.relay : null, targetRelayId,
       };
-
       setMessages(prev => [...prev, assistantMsg]);
       setConversation(prev => [
         ...prev,
@@ -315,15 +472,14 @@ export function AIChat() {
     } catch (err: unknown) {
       const raw = err instanceof Error ? err.message : "Request failed";
       const isQuota = raw.includes("quota") || raw.includes("429") || raw.includes("RESOURCE_EXHAUSTED");
-      const errMsg = isQuota
+      setMessages(prev => [...prev, { role: "assistant", content: isQuota
         ? "⚠ AI is temporarily rate-limited. Please wait a minute and try again."
-        : `⚠ ${raw}`;
-      setMessages(prev => [...prev, { role: "assistant", content: errMsg }]);
+        : `⚠ ${raw}` }]);
     } finally {
       setLoading(false);
       inputRef.current?.focus();
     }
-  }, [input, loading, conversation, selectedRelayId]);
+  }, [input, loading, conversation, selectedRelayId, stopAll]);
 
   // ── Deploy / Update ────────────────────────────────────────────────────────
   const handleDeploy = useCallback(async (msg: ChatMessage) => {
@@ -331,38 +487,21 @@ export function AIChat() {
     setDeploying(true);
     try {
       let resultId: string;
-
       if (msg.targetRelayId) {
-        // UPDATE
         await api.updateRelay(msg.targetRelayId, {
-          name: msg.relaySpec.name,
-          description: msg.relaySpec.description,
-          trigger_type: msg.relaySpec.trigger_type,
-          trigger_config: msg.relaySpec.trigger_config,
+          name: msg.relaySpec.name, description: msg.relaySpec.description,
+          trigger_type: msg.relaySpec.trigger_type, trigger_config: msg.relaySpec.trigger_config,
         });
         await api.updateRelayActions(msg.targetRelayId, msg.relaySpec.actions, msg.relaySpec.edges);
         resultId = msg.targetRelayId;
-        setMessages(prev => [...prev, {
-          role: "assistant",
-          content: `🔄 "${msg.relaySpec!.name}" updated successfully!`,
-        }]);
+        setMessages(prev => [...prev, { role: "assistant", content: `🔄 "${msg.relaySpec!.name}" updated successfully!` }]);
       } else {
-        // CREATE
         const created = await api.createRelay(msg.relaySpec);
         resultId = created.id;
-        setMessages(prev => [...prev, {
-          role: "assistant",
-          content: `🚀 "${created.name}" deployed! Find it in Relay Matrix.`,
-        }]);
+        setMessages(prev => [...prev, { role: "assistant", content: `🚀 "${created.name}" deployed! Find it in Relay Matrix.` }]);
       }
-
-      setMessages(prev => prev.map(m =>
-        m === msg ? { ...m, deployed: true, deployedRelayId: resultId, error: undefined } : m
-      ));
-
-      // Notify relay matrix to refresh instantly
+      setMessages(prev => prev.map(m => m === msg ? { ...m, deployed: true, deployedRelayId: resultId, error: undefined } : m));
       window.dispatchEvent(new CustomEvent("iris:relay-changed"));
-      // Also refresh the selector
       loadRelays();
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : "Operation failed";
@@ -374,13 +513,20 @@ export function AIChat() {
 
   // ── Clear ─────────────────────────────────────────────────────────────────
   const handleClear = useCallback(() => {
+    stopAll();
     setConversation([]);
     setSelectedRelayId("");
     setMessages(DEFAULT_MESSAGES);
     try { localStorage.removeItem(STORAGE_KEY); } catch { /* ok */ }
-  }, []);
+  }, [stopAll]);
 
   const selectedRelay = relays.find(r => r.id === selectedRelayId);
+  const isRecording = voiceState === "listening";
+  const isTranscribing = voiceState === "transcribing";
+  // The live display text: committed words + italic interim
+  const liveTranscript = transcriptSoFar
+    ? interimText ? `${transcriptSoFar} ${interimText}` : transcriptSoFar
+    : interimText;
 
   return (
     <div className="flex flex-col h-full border border-iris-border-strong bg-iris-base">
@@ -445,26 +591,113 @@ export function AIChat() {
 
       {/* Input */}
       <div className="p-3 border-t border-iris-border-strong bg-iris-surface shrink-0">
-        <div className="relative flex items-center">
-          <span className="absolute left-3 text-iris-accent text-sm font-black select-none">&gt;</span>
+
+        {/* ── Voice streaming panel ─────────────────────────────────── */}
+        {isRecording && (
+          <div className="mb-2 border border-red-500/50 bg-red-500/5">
+            {/* Header row */}
+            <div className="flex items-center justify-between px-3 py-1.5 border-b border-red-500/30">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                <span className="text-[9px] font-black uppercase tracking-widest text-red-400">
+                  {hasSpeechAPI ? "Live Transcription" : "Recording"}
+                </span>
+              </div>
+              <button
+                onClick={stopAll}
+                className="text-[9px] font-mono text-red-400/70 hover:text-red-300 transition-colors"
+              >
+                stop & use ↵
+              </button>
+            </div>
+            {/* Transcript area */}
+            <div className="px-3 py-2.5 min-h-[40px] max-h-[120px] overflow-y-auto">
+              {liveTranscript ? (
+                <p className="text-sm font-mono text-white leading-relaxed">
+                  {/* committed words */}
+                  <span>{transcriptSoFar}</span>
+                  {/* interim words — dimmer */}
+                  {interimText && (
+                    <span className="text-white/50"> {interimText}</span>
+                  )}
+                  {/* blinking cursor */}
+                  <span className="inline-block w-[2px] h-[1em] bg-red-400 ml-0.5 align-middle animate-pulse" />
+                </p>
+              ) : (
+                <p className="text-xs font-mono text-red-400/60 italic">
+                  {hasSpeechAPI ? "Speak now — text will appear here…" : "Recording in progress…"}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {isTranscribing && (
+          <div className="mb-2 border border-iris-accent/40 bg-iris-accent/5 px-3 py-2 flex items-center gap-2">
+            <Loader2 className="w-3 h-3 animate-spin text-iris-accent shrink-0" />
+            <span className="text-[10px] font-mono text-iris-accent">Sending to ElevenLabs for transcription…</span>
+          </div>
+        )}
+
+        <div className="relative flex items-center gap-2">
+          <span className="absolute left-3 text-iris-accent text-sm font-black select-none z-10">&gt;</span>
           <input
             ref={inputRef}
             type="text"
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => e.key === "Enter" && !e.shiftKey && handleSend()}
-            placeholder={selectedRelayId ? "What would you like to change?" : "Describe your workflow…"}
-            disabled={loading}
-            className="w-full bg-iris-base border border-iris-border-strong text-white text-xs font-mono tracking-wide pl-8 pr-10 py-3 focus:outline-none focus:border-iris-accent transition-colors disabled:opacity-50 placeholder:text-iris-muted"
+            placeholder={
+              isRecording
+                ? liveTranscript ? "(recording — see panel above)" : "Speak now…"
+                : isTranscribing ? "Transcribing…"
+                : selectedRelayId ? "What would you like to change?"
+                : "Describe your workflow…"
+            }
+            disabled={loading || isTranscribing || isRecording}
+            className={`w-full bg-iris-base border text-white text-xs font-mono tracking-wide pl-8 pr-20 py-3 focus:outline-none transition-colors disabled:opacity-60 placeholder:text-iris-muted ${
+              isRecording ? "border-red-500/60 opacity-60 cursor-not-allowed" : "border-iris-border-strong focus:border-iris-accent"
+            }`}
           />
-          <button onClick={handleSend} disabled={loading || !input.trim()} className="absolute right-3 text-iris-secondary hover:text-iris-accent transition-colors disabled:opacity-30">
+          {/* Mic button */}
+          <button
+            onClick={isRecording ? stopAll : startListening}
+            disabled={loading || isTranscribing}
+            title={isRecording ? "Stop recording" : "Record voice (streaming)"}
+            className={`absolute right-9 transition-colors disabled:opacity-30 ${
+              isRecording
+                ? "text-red-400 hover:text-red-300"
+                : "text-iris-border-strong hover:text-iris-accent"
+            }`}
+          >
+            {isRecording
+              ? <MicOff className="w-3.5 h-3.5" />
+              : <Mic className="w-3.5 h-3.5" />
+            }
+          </button>
+          {/* Send button */}
+          <button
+            onClick={handleSend}
+            disabled={loading || !input.trim() || isTranscribing}
+            className="absolute right-3 text-iris-secondary hover:text-iris-accent transition-colors disabled:opacity-30"
+          >
             <Send className="w-4 h-4" />
           </button>
         </div>
+
         <div className="mt-1.5 text-[9px] text-iris-muted font-mono">
-          {selectedRelayId ? "Edit mode · AI will update the selected relay" : "Create mode · AI builds and deploys your relay"}
+          {isRecording
+            ? hasSpeechAPI
+              ? "🔴 Live STT — words stream above · click mic or ↵ to confirm"
+              : "🔴 Recording · click mic to stop and transcribe"
+            : isTranscribing
+              ? "⏳ ElevenLabs processing…"
+              : selectedRelayId
+                ? "Edit mode · AI will update the selected relay"
+                : "Create mode · AI builds and deploys your relay"}
         </div>
       </div>
     </div>
   );
 }
+

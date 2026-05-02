@@ -13,6 +13,7 @@ import (
 	"github.com/eulerbutcooler/iris/services/iris-telegram/internal/bot"
 	"github.com/eulerbutcooler/iris/services/iris-telegram/internal/config"
 	irisClient "github.com/eulerbutcooler/iris/services/iris-telegram/internal/iris"
+	"github.com/eulerbutcooler/iris/services/iris-telegram/internal/stt"
 	"github.com/eulerbutcooler/iris/services/iris-telegram/internal/store"
 )
 
@@ -60,8 +61,17 @@ func main() {
 	sessions := bot.NewSessionManager(cfg.SessionTTL)
 	sessions.StartCleanup(ctx)
 
+	// ── STT Client (optional) ─────────────────────────────────────────────────
+	var sttClient *stt.Client
+	if cfg.ElevenLabsAPIKey != "" {
+		sttClient = stt.New(cfg.ElevenLabsAPIKey)
+		log.Info("elevenlabs STT enabled — voice notes will be transcribed")
+	} else {
+		log.Warn("ELEVENLABS_API_KEY not set — voice note STT disabled")
+	}
+
 	// ── Bot ───────────────────────────────────────────────────────────────────
-	b, err := bot.New(cfg.TelegramBotToken, sessions, aiClient, iris, db, log)
+	b, err := bot.New(cfg.TelegramBotToken, sessions, aiClient, iris, db, sttClient, log)
 	if err != nil {
 		log.Error("bot init failed", "err", err)
 		os.Exit(1)

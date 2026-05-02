@@ -260,3 +260,24 @@ export async function generateRelay(
     ...(relayId ? { relay_id: relayId } : {}),
   });
 }
+
+// ─── STT (Speech-to-Text) ─────────────────────────────────────────────────────
+
+export async function transcribeAudio(blob: Blob): Promise<string> {
+  const token = getToken();
+  const form = new FormData();
+  form.append("audio", blob, "audio.webm");
+
+  const res = await fetch(`${BASE}/ai/transcribe`, {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: form,
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ message: "transcription failed" }));
+    throw new Error((err as ApiError).message ?? "transcription failed");
+  }
+  const data = await res.json() as { text: string };
+  return data.text;
+}
