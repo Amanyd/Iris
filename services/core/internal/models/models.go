@@ -173,6 +173,7 @@ type AIMessage struct {
 type AIRelayRequest struct {
 	Message      string      `json:"message"`
 	Conversation []AIMessage `json:"conversation"`
+	RelayID      string      `json:"relay_id,omitempty"` // optional: if set, AI is editing this relay
 }
 
 // AIRelayResponse is the response from the LLM relay generation endpoint.
@@ -181,6 +182,7 @@ type AIRelayResponse struct {
 	Questions []string            `json:"questions,omitempty"`
 	Relay     *CreateRelayRequest `json:"relay,omitempty"`
 	Message   string              `json:"message,omitempty"`
+	RelayID   string              `json:"relay_id,omitempty"` // if set, means update this relay (not create)
 }
 
 // ─── Errors ───────────────────────────────────────────────────────────────────

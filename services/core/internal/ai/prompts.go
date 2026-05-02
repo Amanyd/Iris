@@ -2,6 +2,7 @@ package ai
 
 import (
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -12,12 +13,16 @@ import (
 //go:embed free_apis_catalog.md
 var freeAPIsCatalog string
 
-// BuildSystemPrompt generates the LLM system prompt from the actions registry,
-// the user's saved secret names, and the free APIs catalog.
-//
-// secretNames is the list of secret names the authenticated user has stored.
-// The LLM sees only names — never actual values.
-func BuildSystemPrompt(secretNames []string) string {
+// RelayInfo is a lightweight view of one relay for the AI prompt.
+type RelayInfo struct {
+	ID   string
+	Name string
+}
+
+// BuildSystemPrompt generates the LLM system prompt.
+// secretNames: names of secrets the user has stored (no values).
+// relayInfos: all existing relays (name + ID) so AI can resolve edit requests by name.
+func BuildSystemPrompt(secretNames []string, relayInfos []RelayInfo) string {
 	var sb strings.Builder
 
 	sb.WriteString(`You are Iris, an intelligent workflow automation assistant.
@@ -145,6 +150,18 @@ Key points:
 - Always set order_index sequentially (0, 1, 2, ...).
 `)
 
+	// ── Existing relays ───────────────────────────────────────────────────────
+	sb.WriteString("## User's Existing Relays\n\n")
+	if len(relayInfos) == 0 {
+		sb.WriteString("User has no existing relays yet.\n\n")
+	} else {
+		sb.WriteString("These relays already exist. If the user asks to EDIT or MODIFY one by name, set relay_id in your response to the matching ID:\n")
+		for _, ri := range relayInfos {
+			sb.WriteString(fmt.Sprintf("- id=%q  name=%q\n", ri.ID, ri.Name))
+		}
+		sb.WriteString("\nIMPORTANT: When editing an existing relay, always set relay_id to its ID in your JSON response.\n\n")
+	}
+
 	// ── Response format ───────────────────────────────────────────────────────
 	sb.WriteString(`## Node IDs
 
@@ -156,6 +173,7 @@ You MUST respond with a single JSON object in this exact shape:
 
 {
   "ready": true | false,
+  "relay_id": "<existing-relay-id-or-omit>",  // ONLY set when editing an existing relay
   "questions": ["question 1", "question 2"],  // only when ready=false
   "message": "brief text to show the user",
   "relay": {                                   // only when ready=true
@@ -184,12 +202,14 @@ You MUST respond with a single JSON object in this exact shape:
 Rules:
 - If you need more information: set ready=false, list questions, set relay=null.
 - If you have everything: set ready=true, set questions=[], populate relay fully.
+- If editing an existing relay: set relay_id to the relay's ID from the list above.
 - Always set message to a friendly summary of what you're doing.
 - Do NOT include any text outside the JSON object. Your entire response must be valid JSON.
 `)
 
 	return sb.String()
 }
+
 
 // CorrectivePrompt is appended when the first LLM response fails validation.
 func CorrectivePrompt(validationErr string) string {
@@ -200,4 +220,64 @@ Please fix the relay JSON and respond again with the corrected version.
 Follow the exact response format specified in the system prompt.`,
 		validationErr,
 	)
+}
+
+// BuildRelayEditContext returns a user-turn message injected at the start of an
+// edit session. It shows the LLM the relay's current configuration so it can
+// intelligently modify it instead of rebuilding from scratch.
+func BuildRelayEditContext(relay *RelaySnapshot) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf(
+		"I want to edit an existing relay.\n\nCurrent relay config (name: %q, trigger: %s):\n",
+		relay.Name, relay.TriggerType,
+	))
+
+	sb.WriteString("\nActions:\n")
+	for _, a := range relay.Actions {
+		configJSON, _ := jsonMarshal(a.Config)
+		sb.WriteString(fmt.Sprintf("  - node_id=%q  action_type=%q  config=%s\n",
+			a.NodeID, a.ActionType, configJSON))
+	}
+
+	sb.WriteString("\nEdges:\n")
+	for _, e := range relay.Edges {
+		condJSON := "null"
+		if e.Condition != nil {
+			b, _ := jsonMarshal(e.Condition)
+			condJSON = string(b)
+		}
+		sb.WriteString(fmt.Sprintf("  - %s → %s  condition=%s\n",
+			e.ParentNodeID, e.ChildNodeID, condJSON))
+	}
+
+	sb.WriteString("\nPlease modify this relay based on my next message. " +
+		"Return the FULL updated relay definition (not just the changed parts). " +
+		"Keep the same node_id values where possible to preserve intent.")
+	return sb.String()
+}
+
+// RelaySnapshot is a lightweight view of a relay passed to the AI prompt builder.
+type RelaySnapshot struct {
+	Name        string
+	TriggerType string
+	TriggerConfig map[string]any
+	Actions     []RelaySnapshotAction
+	Edges       []RelaySnapshotEdge
+}
+
+type RelaySnapshotAction struct {
+	NodeID     string
+	ActionType string
+	Config     map[string]any
+}
+
+type RelaySnapshotEdge struct {
+	ParentNodeID string
+	ChildNodeID  string
+	Condition    map[string]any
+}
+
+// jsonMarshal is a safe JSON marshal that returns "{}" on error.
+func jsonMarshal(v any) ([]byte, error) {
+	return json.Marshal(v)
 }

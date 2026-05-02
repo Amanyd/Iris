@@ -14,6 +14,7 @@ type ParsedResponse struct {
 	Questions []string                   `json:"questions"`
 	Message   string                     `json:"message"`
 	Relay     *models.CreateRelayRequest `json:"relay"`
+	RelayID   string                     `json:"relay_id"` // set by AI when editing an existing relay
 }
 
 // ParseResponse extracts a ParsedResponse from the raw LLM text.

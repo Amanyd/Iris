@@ -117,6 +117,7 @@ export interface AIRelayResponse {
   questions?: string[];
   relay?: CreateRelayRequest;
   message?: string;
+  relay_id?: string; // set when AI is updating an existing relay
 }
 
 export interface ApiError {
@@ -251,6 +252,11 @@ export async function deleteSecret(id: string): Promise<void> {
 export async function generateRelay(
   message: string,
   conversation: AIMessage[] = [],
+  relayId?: string,
 ): Promise<AIRelayResponse> {
-  return request<AIRelayResponse>("POST", "/ai/relay", { message, conversation });
+  return request<AIRelayResponse>("POST", "/ai/relay", {
+    message,
+    conversation,
+    ...(relayId ? { relay_id: relayId } : {}),
+  });
 }

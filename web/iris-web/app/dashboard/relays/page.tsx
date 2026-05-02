@@ -38,6 +38,10 @@ export default function RelaysPage() {
 
   useEffect(() => {
     loadData();
+    // Reload when AIChat deploys or updates a relay
+    const onRelayChanged = () => loadData();
+    window.addEventListener("iris:relay-changed", onRelayChanged);
+    return () => window.removeEventListener("iris:relay-changed", onRelayChanged);
   }, []);
 
   // ── Canvas save handler ────────────────────────────────────────────────────
