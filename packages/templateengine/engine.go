@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -147,21 +148,35 @@ func resolveStepExpr(expr string, steps map[string]StepOutput) (any, bool) {
 	return nil, false
 }
 
-// deepGet traverses a nested map[string]any by path segments.
-func deepGet(m map[string]any, path []string) (any, bool) {
-	if m == nil || len(path) == 0 {
+// deepGet traverses a nested structure (map or slice) by path segments.
+func deepGet(v any, path []string) (any, bool) {
+	if len(path) == 0 {
 		return nil, false
 	}
-	val, ok := m[path[0]]
-	if !ok {
+
+	switch val := v.(type) {
+	case map[string]any:
+		next, ok := val[path[0]]
+		if !ok {
+			return nil, false
+		}
+		if len(path) == 1 {
+			return next, true
+		}
+		return deepGet(next, path[1:])
+
+	case []any:
+		idx, err := strconv.Atoi(path[0])
+		if err != nil || idx < 0 || idx >= len(val) {
+			return nil, false
+		}
+		next := val[idx]
+		if len(path) == 1 {
+			return next, true
+		}
+		return deepGet(next, path[1:])
+
+	default:
 		return nil, false
 	}
-	if len(path) == 1 {
-		return val, true
-	}
-	// Recurse into nested map.
-	if nested, ok := val.(map[string]any); ok {
-		return deepGet(nested, path[1:])
-	}
-	return nil, false
 }

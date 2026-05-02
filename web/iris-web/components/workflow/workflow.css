@@ -1,0 +1,128 @@
+/* ─── React Flow Dark Theme Override ─────────────────────────────────────── */
+
+/* Canvas background */
+.react-flow {
+  background-color: #000000;
+}
+
+.react-flow__background {
+  background-color: #000000;
+}
+
+/* Pane */
+.react-flow__pane {
+  cursor: crosshair;
+}
+
+/* ── Edges ─────────────────────────────────────────────────────────────── */
+
+.react-flow__edge-path {
+  stroke: rgba(255, 255, 255, 0.2);
+  stroke-width: 2;
+}
+
+.react-flow__edge.animated .react-flow__edge-path {
+  stroke: #10B981;
+  stroke-dasharray: 8 4;
+  animation: flow-dash 0.8s linear infinite;
+}
+
+@keyframes flow-dash {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+
+.react-flow__edge:hover .react-flow__edge-path {
+  stroke: #10B981;
+  stroke-width: 2.5;
+}
+
+/* ── Handles ───────────────────────────────────────────────────────────── */
+
+.react-flow__handle {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;           /* square handles — blueprint aesthetic */
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  background: #0A0A0A;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.react-flow__handle:hover,
+.react-flow__handle-connecting {
+  border-color: #10B981;
+  background: #10B981;
+}
+
+.react-flow__handle-valid {
+  border-color: #10B981;
+  background: #10B981;
+}
+
+.react-flow__handle-invalid {
+  border-color: #EF4444;
+}
+
+/* ── Selection ─────────────────────────────────────────────────────────── */
+
+.react-flow__selection {
+  background: rgba(16, 185, 129, 0.05);
+  border: 1px solid rgba(16, 185, 129, 0.4);
+}
+
+.react-flow__nodesselection-rect {
+  background: rgba(16, 185, 129, 0.05);
+  border: 1px solid rgba(16, 185, 129, 0.4);
+}
+
+/* ── Mini Map ──────────────────────────────────────────────────────────── */
+
+.react-flow__minimap {
+  background: #0A0A0A;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.react-flow__minimap-mask {
+  fill: rgba(0, 0, 0, 0.6);
+}
+
+.react-flow__minimap-node {
+  fill: rgba(255, 255, 255, 0.1);
+  stroke: none;
+}
+
+/* ── Controls ──────────────────────────────────────────────────────────── */
+
+.react-flow__controls {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: #0A0A0A;
+  box-shadow: none;
+}
+
+.react-flow__controls-button {
+  background: #0A0A0A;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.5);
+  fill: rgba(255, 255, 255, 0.5);
+}
+
+.react-flow__controls-button:hover {
+  background: #111111;
+  color: white;
+  fill: white;
+}
+
+/* ── Node selected state ───────────────────────────────────────────────── */
+
+.react-flow__node.selected > div {
+  box-shadow: 0 0 0 1px #10B981, 0 0 20px rgba(16, 185, 129, 0.2);
+}
+
+/* ── Connection line ───────────────────────────────────────────────────── */
+
+.react-flow__connectionline {
+  stroke: #10B981;
+  stroke-width: 2;
+  stroke-dasharray: 6 3;
+}

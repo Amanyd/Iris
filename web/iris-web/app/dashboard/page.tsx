@@ -1,6 +1,37 @@
-import { Activity, Cpu, Network, Zap } from "lucide-react";
+"use client";
+
+import { Activity, Cpu, Network, Workflow, Shield } from "lucide-react";
+import { useEffect, useState } from "react";
+import * as api from "@/lib/api";
 
 export default function DashboardOverview() {
+  const [relays, setRelays] = useState<api.Relay[]>([]);
+  const [secrets, setSecrets] = useState<api.Secret[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function load() {
+      try {
+        const [r, s] = await Promise.all([api.getRelays(), api.getSecrets()]);
+        setRelays(r);
+        setSecrets(s);
+      } catch {
+        // Ignore — empty state is fine for first load
+      } finally {
+        setLoading(false);
+      }
+    }
+    load();
+  }, []);
+
+  const [ts, setTs] = useState("");
+  useEffect(() => {
+    setTs(new Date().toLocaleTimeString("en-GB"));
+  }, []);
+
+  const activeRelays = relays.filter((r) => r.is_active).length;
+
+
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
       
@@ -13,18 +44,39 @@ export default function DashboardOverview() {
           </h1>
           <p className="text-xs text-iris-secondary font-mono mt-2 tracking-wider">PRIMARY DASHBOARD // V 1.0.4</p>
         </div>
-        <div className="text-xs font-mono text-iris-accent-sub border border-iris-accent-sub/30 bg-iris-accent-sub/10 px-3 py-1 uppercase tracking-widest flex items-center gap-2 hidden md:flex">
+        <div className="text-xs font-mono text-iris-accent-sub border border-iris-accent-sub/30 bg-iris-accent-sub/10 px-3 py-1 uppercase tracking-widest items-center gap-2 hidden md:flex">
           <div className="w-1.5 h-1.5 rounded-full bg-iris-accent-sub animate-pulse" />
-          Live Metrics
+          {loading ? "Loading..." : "Live Metrics"}
         </div>
       </div>
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard title="Total Relays" value="24" icon={<Workflow className="w-5 h-5 text-iris-accent" />} trend="+3 active" trendUp />
-        <StatCard title="Active Connections" value="12" icon={<Network className="w-5 h-5 text-iris-accent-sub" />} trend="Stable" />
-        <StatCard title="Encrypted Secrets" value="8" icon={<Shield className="w-5 h-5 text-iris-success" />} trend="Secured" />
-        <StatCard title="Compute Load" value="42%" icon={<Cpu className="w-5 h-5 text-iris-warning" />} trend="+12% usage" trendUp />
+        <StatCard
+          title="Total Relays"
+          value={loading ? "—" : String(relays.length)}
+          icon={<Workflow className="w-5 h-5 text-iris-accent" />}
+          trend={loading ? "..." : `${activeRelays} active`}
+          trendUp={activeRelays > 0}
+        />
+        <StatCard
+          title="Active Connections"
+          value={loading ? "—" : String(activeRelays)}
+          icon={<Network className="w-5 h-5 text-iris-accent-sub" />}
+          trend="Stable"
+        />
+        <StatCard
+          title="Encrypted Secrets"
+          value={loading ? "—" : String(secrets.length)}
+          icon={<Shield className="w-5 h-5 text-iris-success" />}
+          trend="Secured"
+        />
+        <StatCard
+          title="Compute Load"
+          value="0%"
+          icon={<Cpu className="w-5 h-5 text-iris-warning" />}
+          trend="Idle"
+        />
       </div>
 
       {/* Visual Terminal Block */}
@@ -40,17 +92,21 @@ export default function DashboardOverview() {
             <div className="w-3 h-3 bg-iris-warning rounded-full" />
             <div className="w-3 h-3 bg-iris-success rounded-full" />
           </div>
-          <div className="text-[10px] text-iris-secondary font-mono tracking-widest font-black uppercase">Recent Activity Log</div>
+          <div className="text-[10px] text-iris-secondary font-mono tracking-widest font-black uppercase">System Status Log</div>
         </div>
         
         <div className="p-4 font-mono text-xs space-y-2 h-48 overflow-y-auto custom-scrollbar text-iris-secondary">
-          <LogEntry time="08:42:11" type="INFO" message="Relay 'Alpha_Core' connection established." />
-          <LogEntry time="08:45:03" type="WARN" message="Latency spike detected on Connection_Gateway_7." color="text-iris-warning" />
-          <LogEntry time="09:01:22" type="SUCCESS" message="New secret 'API_KEY_STRIPE' successfully encrypted and stored." color="text-iris-success" />
-          <LogEntry time="09:15:44" type="ERROR" message="Failed to authenticate to relay 'Beta_Node'. Retrying..." color="text-iris-error" />
-          <LogEntry time="09:16:05" type="INFO" message="Relay 'Beta_Node' connection established on retry." />
-          <LogEntry time="10:00:00" type="INFO" message="Scheduled system diagnostic complete. All systems nominal." />
+          <LogEntry time={ts} type="INFO" message="Dashboard initialized. Backend connection established." />
+          <LogEntry time={ts} type="SUCCESS" message={`Loaded ${relays.length} relays, ${secrets.length} secrets from vault.`} color="text-iris-success" />
+          {relays.length === 0 && (
+            <LogEntry time={ts} type="INFO" message="No relays found. Navigate to Relay Matrix to create your first workflow." />
+          )}
+          {secrets.length === 0 && (
+            <LogEntry time={ts} type="WARN" message="Vault is empty. Store API keys in the Vault [AES] section." color="text-iris-warning" />
+          )}
+          <LogEntry time={ts} type="INFO" message="All systems nominal. Ready for operations." />
         </div>
+
       </div>
     </div>
   );
@@ -85,5 +141,3 @@ function LogEntry({ time, type, message, color = "text-iris-secondary" }: { time
     </div>
   );
 }
-
-import { Workflow, Shield, Plug } from "lucide-react"; // Imported for StatCard icons

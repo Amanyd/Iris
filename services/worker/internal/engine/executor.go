@@ -12,7 +12,6 @@ import (
 	"github.com/eulerbutcooler/iris/packages/dag"
 	"github.com/eulerbutcooler/iris/packages/templateengine"
 	"github.com/eulerbutcooler/iris/services/worker/internal/store"
-	"golang.org/x/sync/errgroup"
 )
 
 // Job is a unit of work for the worker pool.
@@ -147,19 +146,32 @@ func (e *Executor) runDAG(ctx context.Context, execID, userID string, job Job, l
 	completedOutputs := &sync.Map{} // map[nodeID]StepOutput
 
 	for _, wave := range g.Waves() {
-		eg, waveCtx := errgroup.WithContext(ctx)
+		// Use a plain WaitGroup instead of errgroup.WithContext so that a failing
+		// node does NOT cancel the shared context and interrupt sibling nodes that
+		// are still doing I/O (e.g. an outbound HTTP call to Discord/Slack).
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		var waveErrs []error
 
 		for _, nodeID := range wave {
 			nodeID := nodeID // capture
 			action := actionMap[nodeID]
+			wg.Add(1)
 
-			eg.Go(func() error {
-				return e.executeNode(waveCtx, execID, userID, job.Payload, action, completedOutputs, g, log)
-			})
+			go func() {
+				defer wg.Done()
+				if err := e.executeNode(ctx, execID, userID, job.Payload, action, completedOutputs, g, log); err != nil {
+					mu.Lock()
+					waveErrs = append(waveErrs, err)
+					mu.Unlock()
+				}
+			}()
 		}
 
-		if err := eg.Wait(); err != nil {
-			return "failed", err
+		wg.Wait()
+
+		if len(waveErrs) > 0 {
+			return "failed", waveErrs[0]
 		}
 	}
 

@@ -3,9 +3,11 @@
 import Link from "next/link";
 import { Command, Workflow, Shield, Plug, LayoutDashboard, Terminal, ChevronRight, LogOut } from "lucide-react";
 import { usePathname } from "next/navigation";
+import { useAuth } from "@/lib/auth-context";
 
 export function Sidebar() {
   const pathname = usePathname();
+  const { user, logout } = useAuth();
   
   return (
     <aside className="w-64 border-r border-iris-border-strong bg-iris-surface flex flex-col relative z-20 flex-shrink-0 h-screen">
@@ -20,14 +22,16 @@ export function Sidebar() {
         </div>
       </div>
 
-      {/* User Status Mockup */}
+      {/* User Status */}
       <div className="px-6 py-4 border-b border-iris-border-strong bg-iris-elevated shrink-0">
         <div className="text-[10px] font-bold text-iris-secondary tracking-widest uppercase mb-1 flex items-center gap-2">
           <Terminal className="w-3 h-3 text-iris-accent-sub" /> Operative Status
         </div>
         <div className="flex items-center gap-2 mt-2">
           <div className="w-2 h-2 bg-iris-success rounded-sm animate-pulse" />
-          <span className="text-xs font-bold text-white tracking-widest uppercase">Admin.Core</span>
+          <span className="text-xs font-bold text-white tracking-widest uppercase truncate max-w-[160px]" title={user?.email}>
+            {user?.email || "Loading..."}
+          </span>
         </div>
       </div>
 
@@ -43,10 +47,13 @@ export function Sidebar() {
 
       {/* Footer Actions */}
       <div className="p-4 border-t border-iris-border-strong bg-iris-base shrink-0">
-        <Link href="/login" className="flex items-center gap-3 px-4 py-3 text-xs font-bold text-iris-error hover:bg-iris-error/10 transition-colors uppercase tracking-widest rounded-sm border border-transparent hover:border-iris-error/30">
+        <button 
+          onClick={logout}
+          className="w-full flex items-center gap-3 px-4 py-3 text-xs font-bold text-iris-error hover:bg-iris-error/10 transition-colors uppercase tracking-widest rounded-sm border border-transparent hover:border-iris-error/30"
+        >
           <LogOut className="w-4 h-4" />
           Disengage
-        </Link>
+        </button>
       </div>
 
     </aside>

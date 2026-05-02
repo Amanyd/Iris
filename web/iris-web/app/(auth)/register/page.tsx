@@ -1,7 +1,47 @@
+"use client";
+
 import Link from "next/link";
-import { Command, Terminal, ChevronRight, UserPlus } from "lucide-react";
+import { Command, Terminal, ChevronRight, UserPlus, Loader2 } from "lucide-react";
+import { useState, type FormEvent } from "react";
+import { useRouter } from "next/navigation";
+import * as api from "@/lib/api";
 
 export default function RegisterPage() {
+  const router = useRouter();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setError("");
+
+    if (password !== confirmPassword) {
+      setError("Passkeys do not match");
+      return;
+    }
+
+    if (password.length < 8) {
+      setError("Passkey must be at least 8 characters");
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const res = await api.register(email, password);
+      localStorage.setItem("iris_token", res.token);
+      localStorage.setItem("iris_user", JSON.stringify(res.user));
+      router.push("/dashboard");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Registration failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <div className="min-h-screen flex items-center justify-center relative overflow-hidden bg-iris-base text-iris-text font-mono selection:bg-iris-accent selection:text-white">
       
@@ -45,21 +85,14 @@ export default function RegisterPage() {
               </p>
             </div>
 
-            <form className="space-y-5">
-              
-              <div className="space-y-2">
-                <label className="flex text-[10px] text-iris-secondary uppercase tracking-widest font-bold">
-                  <Terminal className="w-3 h-3 mr-2 text-iris-accent" />
-                  Operative Name
-                </label>
-                <input 
-                  type="text" 
-                  className="w-full bg-iris-base border border-iris-border-strong px-4 py-3 text-white text-sm font-mono focus:outline-none focus:border-iris-accent-sub focus:shadow-[0_0_15px_rgba(255,153,51,0.2)] transition-all placeholder:text-iris-muted"
-                  placeholder="System Admin"
-                  required
-                />
+            {error && (
+              <div className="mb-6 px-4 py-3 border border-iris-error/50 bg-iris-error/10 text-iris-error text-xs font-mono tracking-wide">
+                ⚠ {error}
               </div>
+            )}
 
+            <form onSubmit={handleSubmit} className="space-y-5">
+              
               <div className="space-y-2">
                 <label className="flex text-[10px] text-iris-secondary uppercase tracking-widest font-bold">
                   <Terminal className="w-3 h-3 mr-2 text-iris-accent" />
@@ -68,6 +101,8 @@ export default function RegisterPage() {
                 <input 
                   type="email" 
                   autoComplete="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
                   className="w-full bg-iris-base border border-iris-border-strong px-4 py-3 text-white text-sm font-mono focus:outline-none focus:border-iris-accent-sub focus:shadow-[0_0_15px_rgba(255,153,51,0.2)] transition-all placeholder:text-iris-muted"
                   placeholder="admin@iris.core"
                   required
@@ -82,6 +117,8 @@ export default function RegisterPage() {
                 <input 
                   type="password" 
                   autoComplete="new-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
                   className="w-full bg-iris-base border border-iris-border-strong px-4 py-3 text-white text-sm font-mono focus:outline-none focus:border-iris-accent-sub focus:shadow-[0_0_15px_rgba(255,153,51,0.2)] transition-all placeholder:text-iris-muted"
                   placeholder="••••••••••••"
                   required
@@ -96,6 +133,8 @@ export default function RegisterPage() {
                 <input 
                   type="password" 
                   autoComplete="new-password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
                   className="w-full bg-iris-base border border-iris-border-strong px-4 py-3 text-white text-sm font-mono focus:outline-none focus:border-iris-accent-sub focus:shadow-[0_0_15px_rgba(255,153,51,0.2)] transition-all placeholder:text-iris-muted"
                   placeholder="••••••••••••"
                   required
@@ -103,11 +142,15 @@ export default function RegisterPage() {
               </div>
 
               <button 
-                type="button" 
-                className="w-full bg-white text-black font-bold text-sm tracking-[0.15em] uppercase py-4 flex items-center justify-center gap-2 hover:bg-iris-accent hover:text-white hover:border-iris-accent border border-white transition-all group mt-6"
+                type="submit" 
+                disabled={loading}
+                className="w-full bg-white text-black font-bold text-sm tracking-[0.15em] uppercase py-4 flex items-center justify-center gap-2 hover:bg-iris-accent hover:text-white hover:border-iris-accent border border-white transition-all group mt-6 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Compile Node
-                <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                {loading ? (
+                  <><Loader2 className="w-4 h-4 animate-spin" /> Compiling...</>
+                ) : (
+                  <>Compile Node <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" /></>
+                )}
               </button>
             </form>
           </div>
