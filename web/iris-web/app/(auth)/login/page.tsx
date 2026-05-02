@@ -1,7 +1,35 @@
+"use client";
+
 import Link from "next/link";
-import { Command, Terminal, ChevronRight, Lock } from "lucide-react";
+import { Command, Terminal, ChevronRight, Lock, Loader2 } from "lucide-react";
+import { useState, type FormEvent } from "react";
+import { useRouter } from "next/navigation";
+import * as api from "@/lib/api";
 
 export default function LoginPage() {
+  const router = useRouter();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+
+    try {
+      const res = await api.login(email, password);
+      localStorage.setItem("iris_token", res.token);
+      localStorage.setItem("iris_user", JSON.stringify(res.user));
+      router.push("/dashboard");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Login failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <div className="min-h-screen flex items-center justify-center relative overflow-hidden bg-iris-base text-iris-text font-mono selection:bg-iris-accent selection:text-white">
       
@@ -45,7 +73,13 @@ export default function LoginPage() {
               </p>
             </div>
 
-            <form className="space-y-6">
+            {error && (
+              <div className="mb-6 px-4 py-3 border border-iris-error/50 bg-iris-error/10 text-iris-error text-xs font-mono tracking-wide">
+                ⚠ {error}
+              </div>
+            )}
+
+            <form onSubmit={handleSubmit} className="space-y-6">
               <div className="space-y-2">
                 <label className="flex text-[10px] text-iris-secondary uppercase tracking-widest font-bold">
                   <Terminal className="w-3 h-3 mr-2 text-iris-accent-sub" />
@@ -54,6 +88,8 @@ export default function LoginPage() {
                 <input 
                   type="email" 
                   autoComplete="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
                   className="w-full bg-iris-base border border-iris-border-strong px-4 py-3 text-white text-sm font-mono focus:outline-none focus:border-iris-accent focus:shadow-[0_0_15px_rgba(255,51,102,0.2)] transition-all placeholder:text-iris-muted"
                   placeholder="admin@iris.core"
                   required
@@ -66,13 +102,12 @@ export default function LoginPage() {
                     <Terminal className="w-3 h-3 mr-2 text-iris-accent-sub" />
                     Passkey
                   </label>
-                  <Link href="/forgot" className="text-[10px] text-iris-muted hover:text-iris-accent transition-colors uppercase tracking-widest">
-                    Override?
-                  </Link>
                 </div>
                 <input 
                   type="password" 
                   autoComplete="current-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
                   className="w-full bg-iris-base border border-iris-border-strong px-4 py-3 text-white text-sm font-mono focus:outline-none focus:border-iris-accent focus:shadow-[0_0_15px_rgba(255,51,102,0.2)] transition-all placeholder:text-iris-muted"
                   placeholder="••••••••••••"
                   required
@@ -80,11 +115,15 @@ export default function LoginPage() {
               </div>
 
               <button 
-                type="button" 
-                className="w-full bg-iris-accent text-white font-bold text-sm tracking-[0.15em] uppercase py-4 flex items-center justify-center gap-2 hover:bg-white hover:text-black transition-colors group mt-4 border border-iris-accent hover:border-white"
+                type="submit" 
+                disabled={loading}
+                className="w-full bg-iris-accent text-white font-bold text-sm tracking-[0.15em] uppercase py-4 flex items-center justify-center gap-2 hover:bg-white hover:text-black transition-colors group mt-4 border border-iris-accent hover:border-white disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Authenticate
-                <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                {loading ? (
+                  <><Loader2 className="w-4 h-4 animate-spin" /> Authenticating...</>
+                ) : (
+                  <>Authenticate <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" /></>
+                )}
               </button>
             </form>
           </div>

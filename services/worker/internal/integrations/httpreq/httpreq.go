@@ -12,7 +12,10 @@ import (
 	"github.com/eulerbutcooler/iris/services/worker/internal/engine"
 )
 
-var httpClient = &http.Client{Timeout: 30 * time.Second}
+// httpClient has no global timeout; each request carries its own context deadline.
+var httpClient = &http.Client{}
+
+const httpReqTimeout = 30 * time.Second
 
 // Executor implements engine.ActionExecutor for the "http_request" action type.
 type Executor struct{}
@@ -44,7 +47,12 @@ func (e *Executor) Execute(
 		bodyReader = strings.NewReader(body)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
+	// Decouple from the engine's wave context so that a sibling node failure
+	// doesn't cancel this outbound request mid-flight.
+	httpCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), httpReqTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(httpCtx, method, url, bodyReader)
 	if err != nil {
 		return nil, fmt.Errorf("http_request: build request: %w", err)
 	}
@@ -74,9 +82,27 @@ func (e *Executor) Execute(
 		respHeaders[k] = strings.Join(vv, ", ")
 	}
 
+	// Try to parse the response body as JSON so downstream nodes can do
+	// output.body.some.field — fall back to raw string for non-JSON responses.
+	var bodyVal any = string(respBody)
+	var parsed map[string]any
+	if err := json.Unmarshal(respBody, &parsed); err == nil {
+		bodyVal = parsed
+	} else {
+		fmt.Printf("httpreq unmarshal map err: %v\n", err)
+		// Try JSON array
+		var parsedArr []any
+		if err2 := json.Unmarshal(respBody, &parsedArr); err2 == nil {
+			bodyVal = parsedArr
+		} else {
+			fmt.Printf("httpreq unmarshal arr err: %v\n", err2)
+		}
+	}
+
 	result := map[string]any{
+		"status":      resp.StatusCode, // also exposed as "status" for template compat
 		"status_code": resp.StatusCode,
-		"body":        string(respBody),
+		"body":        bodyVal,
 		"headers":     respHeaders,
 	}
 	out, _ := json.Marshal(result)

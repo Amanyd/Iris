@@ -11,7 +11,10 @@ import (
 	"github.com/eulerbutcooler/iris/services/worker/internal/engine"
 )
 
-var httpClient = &http.Client{Timeout: 10 * time.Second}
+// httpClient has no global timeout; each request carries its own context deadline.
+var httpClient = &http.Client{}
+
+const slackTimeout = 15 * time.Second
 
 // Executor implements engine.ActionExecutor for "slack_send".
 type Executor struct{}
@@ -35,7 +38,13 @@ func (e *Executor) Execute(
 	}
 
 	body, _ := json.Marshal(map[string]string{"text": message})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhookURL, bytes.NewReader(body))
+
+	// Decouple from the engine's wave context so that a sibling node failure
+	// doesn't cancel this outbound request mid-flight.
+	httpCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), slackTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(httpCtx, http.MethodPost, webhookURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("slack_send: build request: %w", err)
 	}

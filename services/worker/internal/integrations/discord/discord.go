@@ -11,7 +11,10 @@ import (
 	"github.com/eulerbutcooler/iris/services/worker/internal/engine"
 )
 
-var httpClient = &http.Client{Timeout: 10 * time.Second}
+// httpClient has no global timeout; each request carries its own context deadline.
+var httpClient = &http.Client{}
+
+const discordTimeout = 15 * time.Second
 
 // Executor implements engine.ActionExecutor for "discord_send".
 type Executor struct{}
@@ -36,7 +39,15 @@ func (e *Executor) Execute(
 	}
 
 	body, _ := json.Marshal(map[string]string{"content": message})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhookURL, bytes.NewReader(body))
+
+	// Decouple from the engine's step deadline: use context.WithoutCancel so that
+	// a tight relay execution window doesn't cancel an otherwise healthy outbound
+	// request before Discord's API has a chance to respond.  We still propagate
+	// explicit user-initiated cancellation via the parent values.
+	httpCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), discordTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(httpCtx, http.MethodPost, webhookURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("discord_send: build request: %w", err)
 	}

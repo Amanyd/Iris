@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/eulerbutcooler/iris/services/worker/internal/engine"
 	"github.com/nats-io/nats.go"
 )
+
 
 const (
 	streamName    = "EVENTS"
@@ -75,7 +77,27 @@ func NewConsumer(natsURL string, jobQueue chan<- engine.Job, log *slog.Logger) (
 // Messages are converted to engine.Job and pushed to the job queue.
 // The MsgAck callback ACKs or NAKs the NATS message based on processing outcome.
 func (c *Consumer) Start(ctx context.Context) error {
-	sub, err := c.js.Subscribe(
+	sub, err := c.subscribe(ctx)
+	if err != nil {
+		// "already bound" means a previous instance crashed and left the durable
+		// push-consumer bound. Delete it and retry once.
+		if strings.Contains(err.Error(), "already bound") {
+			c.log.Warn("consumer already bound — deleting stale consumer and retrying")
+			_ = c.js.DeleteConsumer(streamName, consumerName)
+			sub, err = c.subscribe(ctx)
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("consumer: subscribe: %w", err)
+	}
+
+	c.sub = sub
+	c.log.Info("nats consumer started", "subject", subscribeSubj, "consumer", consumerName)
+	return nil
+}
+
+func (c *Consumer) subscribe(ctx context.Context) (*nats.Subscription, error) {
+	return c.js.Subscribe(
 		subscribeSubj,
 		func(msg *nats.Msg) {
 			var event ExecutionEvent
@@ -108,16 +130,10 @@ func (c *Consumer) Start(ctx context.Context) error {
 		nats.Durable(consumerName),
 		nats.AckExplicit(),
 		nats.DeliverAll(),
-		nats.MaxAckPending(50), // backpressure: don't deliver more than 50 unacked at once
+		nats.MaxAckPending(50),
 	)
-	if err != nil {
-		return fmt.Errorf("consumer: subscribe: %w", err)
-	}
-
-	c.sub = sub
-	c.log.Info("nats consumer started", "subject", subscribeSubj, "consumer", consumerName)
-	return nil
 }
+
 
 // Stop drains the subscription and closes the NATS connection.
 func (c *Consumer) Stop() {
