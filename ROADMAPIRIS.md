@@ -14,16 +14,16 @@
 6. [Monorepo Structure](#6-monorepo-structure)
 7. [Database Schema — Full Evolution](#7-database-schema--full-evolution)
 8. [Phase 0 — Foundation & Repository Setup](#8-phase-0--foundation--repository-setup)
-9. [Phase 1 — Shared Library (`iris-common`)](#9-phase-1--shared-library-iris-common)
-10. [Phase 2 — `iris-core` (REST API)](#10-phase-2--iris-core-rest-api)
-11. [Phase 3 — `iris-hooks` (Webhook Ingestion)](#11-phase-3--iris-hooks-webhook-ingestion)
-12. [Phase 4 — `iris-worker` (Execution Engine)](#12-phase-4--iris-worker-execution-engine)
+9. [Phase 1 — Shared Library (`packages/`)](#9-phase-1--shared-library-packages)
+10. [Phase 2 — `services/core` (REST API)](#10-phase-2--servicescore-rest-api)
+11. [Phase 3 — `services/hooks` (Webhook Ingestion)](#11-phase-3--serviceshooks-webhook-ingestion)
+12. [Phase 4 — `services/worker` (Execution Engine)](#12-phase-4--servicesworker-execution-engine)
 13. [Phase 5 — Frontend Revamp](#13-phase-5--frontend-revamp)
 14. [Phase 6 — LLM Embedded on Web (Chat-to-Relay)](#14-phase-6--llm-embedded-on-web-chat-to-relay)
-15. [Phase 7 — `iris-telegram` (Telegram Bot + LLM)](#15-phase-7--iris-telegram-telegram-bot--llm)
+15. [Phase 7 — `services/iris-telegram` (Telegram Bot + LLM)](#15-phase-7--servicesiris-telegram-telegram-bot--llm)
 16. [Phase 8 — Notifications & Real-Time Events](#16-phase-8--notifications--real-time-events)
-17. [Phase 9 — Testing & Hardening](#17-phase-9--testing--hardening)
-18. [Phase 10 — Infrastructure, Docker & Deployment](#18-phase-10--infrastructure-docker--deployment)
+17. [Phase 9 — Testing *(deferred)*](#17-phase-9--testing-deferred)
+18. [Phase 10 — Docker & Deployment *(deferred)*](#18-phase-10--docker--deployment-deferred)
 19. [Development Order Summary](#19-development-order-summary)
 20. [Migration Timeline](#20-migration-timeline)
 21. [Files Created / Changed Summary](#21-files-created--changed-summary)
@@ -112,7 +112,7 @@ The core primitive is a **Relay**: a named workflow with one trigger (webhook, c
 ┌────────────────────────────────────┐
 │         iris-common (shared lib)   │
 │  dag · templateengine · encryptor  │
-│  cronutil · actions · oauth · logger│
+│  cronutil · actions · logger       │
 └────────────────────────────────────┘
 ```
 
@@ -228,7 +228,6 @@ This order is critical: producers must stop before consumers, and consumers must
 | Auth | **JWT (golang-jwt, HS256, 168h expiry)** | Stateless, fast to verify |
 | Password hashing | **bcrypt** | Standard adaptive hashing |
 | Secret encryption | **AES-GCM** | Authenticated encryption, tamper-evident |
-| OAuth | **Google + Microsoft** | Email integration via OAuth2 PKCE |
 | LLM (backend) | **OpenAI API / Gemini API** | Structured JSON output for relay generation |
 | LLM (Go client) | **go-openai** or official Gemini SDK | Provider-swappable via `LLMClient` interface |
 | Telegram bot | **go-telegram-bot-api/v5** | Official Telegram Bot API Go client |
@@ -358,15 +357,12 @@ iris/                                   ← root (renamed from hermes/)
 │           ├── actions/                ← Action type registry + config validation
 │           │   ├── actions.go
 │           │   └── actions_test.go
-│           ├── oauth/                  ← Google + Microsoft OAuth providers
-│           │   └── oauth.go
 │           └── logger/                 ← Structured slog factory
 │               └── logger.go
 │
 └── services/
     ├── iris-core/                      ← REST API service
     │   ├── go.mod
-    │   ├── Dockerfile
     │   ├── cmd/
     │   │   └── api/
     │   │       └── main.go
@@ -378,23 +374,21 @@ iris/                                   ← root (renamed from hermes/)
     │       │   ├── router.go
     │       │   ├── handlers.go         ← Relay CRUD, executions
     │       │   ├── auth_handlers.go    ← Register, login
-    │       │   ├── oauth_handlers.go   ← OAuth callback, connections
-    │       │   ├── ai_handlers.go      ← NEW: LLM relay generation endpoint
+    │       │   ├── ai_handlers.go      ← LLM relay generation endpoint
     │       │   ├── middleware.go       ← JWT auth middleware
     │       │   └── interfaces.go       ← Store interfaces
+    │       ├── ai/                     ← LLM client, prompts, parser
     │       ├── models/                 ← Request/response structs
     │       │   └── models.go
     │       ├── store/                  ← DB query layer
     │       │   ├── user_store.go
     │       │   ├── relay_store.go
-    │       │   ├── secret_store.go
-    │       │   └── connections_store.go
+    │       │   └── secret_store.go
     │       ├── db/                     ← DB connection setup
     │       └── queue/                  ← NATS publisher (for manual trigger)
     │
     ├── iris-hooks/                     ← Webhook ingestion service
     │   ├── go.mod
-    │   ├── Dockerfile
     │   ├── cmd/server/main.go
     │   └── internal/
     │       ├── api/                    ← Single handler: POST /hooks/:relayID
@@ -403,7 +397,6 @@ iris/                                   ← root (renamed from hermes/)
     │
     ├── iris-worker/                    ← Execution engine service
     │   ├── go.mod
-    │   ├── Dockerfile
     │   ├── cmd/main.go
     │   └── internal/
     │       ├── config/
@@ -422,10 +415,8 @@ iris/                                   ← root (renamed from hermes/)
     │           ├── email/
     │           └── condition/          ← NEW: conditional branching node
     │
-    └── iris-telegram/                  ← NEW: Telegram bot + LLM service
+    └── iris-telegram/                  ← Telegram bot + LLM service
         ├── go.mod
-        ├── Dockerfile
-        ├── .env
         ├── cmd/bot/main.go
         └── internal/
             ├── config/                 ← Env-based config
@@ -523,23 +514,6 @@ CREATE TABLE secrets (
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
     UNIQUE(user_id, name)
-);
-```
-
-### Migration 000004 — OAuth Connections
-
-```sql
-CREATE TABLE connections (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-    provider TEXT NOT NULL,
-    access_token TEXT NOT NULL,   -- encrypted
-    refresh_token TEXT NOT NULL,  -- encrypted
-    account_email TEXT NOT NULL,
-    scopes TEXT NOT NULL DEFAULT '',
-    token_expiry TIMESTAMP,
-    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 ```
 
@@ -667,29 +641,23 @@ CREATE INDEX IF NOT EXISTS idx_ai_sessions_user ON ai_sessions(user_id);
 DATABASE_URL=postgres://user:password@localhost:5432/iris?sslmode=disable
 NATS_URL=nats://localhost:4222
 
-# iris-core
+# services/core
 JWT_SECRET=change-me-to-a-256-bit-random-string
 ENCRYPTION_KEY=change-me-to-a-32-byte-hex-string
 FRONTEND_URL=http://localhost:3001
 CORE_PORT=3000
 
-# OAuth (optional)
-GOOGLE_CLIENT_ID=
-GOOGLE_CLIENT_SECRET=
-MICROSOFT_CLIENT_ID=
-MICROSOFT_CLIENT_SECRET=
-
-# iris-hooks
+# services/hooks
 HOOKS_PORT=8080
 
-# iris-telegram (NEW)
+# services/iris-telegram
 TELEGRAM_BOT_TOKEN=
-LLM_PROVIDER=openai           # openai | gemini | anthropic
+LLM_PROVIDER=openai           # openai | gemini
 LLM_API_KEY=sk-...
 LLM_MODEL=gpt-4o-mini
 IRIS_CORE_URL=http://localhost:3000
 
-# iris-core AI endpoint (NEW)
+# services/core AI endpoint
 LLM_API_KEY=sk-...
 LLM_MODEL=gpt-4o-mini
 LLM_PROVIDER=openai
@@ -702,10 +670,10 @@ LLM_PROVIDER=openai
 go 1.22
 
 use (
-    ./packages/iris-common
-    ./services/iris-core
-    ./services/iris-hooks
-    ./services/iris-worker
+    ./packages
+    ./services/core
+    ./services/hooks
+    ./services/worker
     ./services/iris-telegram
 )
 ```
@@ -950,29 +918,7 @@ func Resolve(config map[string]any, payload []byte, steps map[string]StepOutput)
 4. Use reflection or JSON unmarshal → `map[string]any` traversal to resolve deep paths.
 5. If resolution fails (missing key, nil parent): return the original `{{expr}}` unchanged and log a warning (don't panic).
 
-### 9.6 `pkg/oauth` — OAuth Providers
-
-```go
-// oauth.go
-type Provider interface {
-    AuthURL(state string) string
-    ExchangeCode(ctx context.Context, code string) (*Token, error)
-    RefreshToken(ctx context.Context, refreshToken string) (*Token, error)
-    GetEmail(ctx context.Context, accessToken string) (string, error)
-}
-
-type Token struct {
-    AccessToken  string
-    RefreshToken string
-    Expiry       time.Time
-    Scopes       []string
-}
-
-func NewGoogleProvider(clientID, clientSecret, redirectURL string) Provider
-func NewMicrosoftProvider(clientID, clientSecret, redirectURL string) Provider
-```
-
-### 9.7 `pkg/actions` — Action Registry & Validation
+### 9.6 `pkg/actions` — Action Registry & Validation
 
 ```go
 // actions.go
@@ -1012,7 +958,7 @@ func ValidateConfig(actionType string, config map[string]any) error
 
 ## 10. Phase 2 — `iris-core` (REST API)
 
-**Goal:** The primary REST API. Auth, relay CRUD, secrets, OAuth connections, execution history, and the new LLM relay generation endpoint.
+**Goal:** The primary REST API. Auth, relay CRUD, secrets, execution history, and the LLM relay generation endpoint. No OAuth.
 
 **Duration:** 1.5 weeks
 
@@ -1022,17 +968,12 @@ func ValidateConfig(actionType string, config map[string]any) error
 
 ```go
 type Config struct {
-    Port         string
-    DatabaseURL  string
-    NATSURL      string
-    JWTSecret    string
+    Port          string
+    DatabaseURL   string
+    NATSURL       string
+    JWTSecret     string
     EncryptionKey string
-    FrontendURL  string
-    // OAuth
-    GoogleClientID     string
-    GoogleClientSecret string
-    MicrosoftClientID  string
-    MicrosoftClientSecret string
+    FrontendURL   string
     // LLM (for AI relay generation endpoint)
     LLMProvider string  // "openai" | "gemini"
     LLMAPIKey   string
@@ -1078,8 +1019,7 @@ Build in this order:
 
 1. **`user_store.go`** — `CreateUser`, `GetUserByEmail`, `GetUserByID`
 2. **`secret_store.go`** — `CreateSecret`, `GetSecret`, `ListSecrets`, `DeleteSecret`
-3. **`connections_store.go`** — `CreateConnection`, `GetConnection`, `ListConnections`, `DeleteConnection`, `UpdateConnectionTokens`
-4. **`relay_store.go`** — most complex, includes DAG:
+3. **`relay_store.go`** — most complex, includes DAG:
    - `CreateRelay(ctx, req CreateRelayRequest) (*RelayWithActions, error)` — inserts relay + actions + edges in one transaction
    - `GetRelay(ctx, id string) (*RelayWithActions, error)` — JOINs actions + edges
    - `GetRelayGraph(ctx, id string) ([]RelayAction, []RelayEdge, error)` — used by worker
@@ -1135,15 +1075,6 @@ func JWTAuth(secret string) func(http.Handler) http.Handler
 // POST /api/v1/auth/register
 // POST /api/v1/auth/login
 // → returns AuthResponse{Token, User}
-```
-
-**`oauth_handlers.go`** — `ConnectProvider`, `OAuthCallback`, `ListConnections`, `DeleteConnection`:
-
-```go
-// GET /api/v1/connections/{provider}/connect → redirects to OAuth consent
-// GET /api/v1/auth/callback/{provider}       → exchanges code, stores tokens
-// GET /api/v1/connections                    → list user's connections
-// DELETE /api/v1/connections/{id}            → revoke connection
 ```
 
 **`handlers.go`** — core relay CRUD + execution history:
@@ -1209,12 +1140,11 @@ func NewRouter(h *Handler, cfg *config.Config) *chi.Mux {
         // public
         r.Post("/auth/register", h.Register)
         r.Post("/auth/login", h.Login)
-        r.Get("/auth/callback/{provider}", h.OAuthCallback)
 
         // protected (JWT required)
         r.Group(func(r chi.Router) {
             r.Use(JWTAuth(cfg.JWTSecret))
-            // relays, secrets, connections, executions, AI endpoint
+            // relays, secrets, executions, AI endpoint
         })
     })
 }
@@ -1341,17 +1271,28 @@ Each plugin is a separate package implementing `ActionExecutor`:
 
 **`httpreq/httpreq.go`** — generic HTTP client:
 ```go
-// config: url, method, headers (map), body (string)
-// returns: {"status_code": 200, "body": {...}, "headers": {...}}
+// config fields:
+//   url     (string, required)  — target URL
+//   method  (string, required)  — GET | POST | PUT | PATCH | DELETE
+//   headers (map, optional)     — key/value pairs added to the request
+//   body    (string, optional)  — raw request body (supports {{payload}} / {{steps[...].output}} templates)
+//
+// returns: {"status_code": 200, "body": "<response body string>", "headers": {...}}
+//
+// Implementation:
+//   1. Build http.Request with method + url
+//   2. Range over headers map, call req.Header.Set(k, v)
+//   3. If body != "": strings.NewReader(body) as request body
+//   4. Execute with http.DefaultClient (30s timeout)
+//   5. Read response body, return as string in output JSON
 ```
 
-**`email/email.go`** — uses OAuth connection to send email via Gmail or Microsoft Graph API:
+**`email/email.go`** — send email via SMTP or a pre-configured email provider:
 ```go
-// config: connection_id, to, subject, body
-// 1. Load connection from DB (encrypted tokens)
-// 2. If token expired, refresh via oauth.Provider.RefreshToken()
-// 3. POST to Gmail API or Microsoft Graph /sendMail
-// returns: {"message_id": "..."}
+// config: to, subject, body
+// returns: {"sent": true}
+// Implementation: use net/smtp or a transactional email API (e.g. Resend, Mailgun)
+// Note: no OAuth needed — use API key stored as a secret
 ```
 
 **`condition/condition.go`** — NEW: evaluate a boolean expression:
@@ -1522,15 +1463,13 @@ func main() {
     cfg := config.Load()
     db := store.Connect(cfg.DatabaseURL)
     encryptor := encryptor.New(cfg.EncryptionKey)
-    oauthProviders := oauth.LoadProviders(cfg)
-
     store := store.New(db, encryptor)
     registry := engine.NewRegistry()
     registry.Register("debug_log", debug.New())
     registry.Register("discord_send", discord.New())
     registry.Register("slack_send", slack.New())
     registry.Register("http_request", httpreq.New())
-    registry.Register("email_send", email.New(store, oauthProviders))
+    registry.Register("email_send", email.New(store))
     registry.Register("condition", condition.New())
 
     executor := engine.NewExecutor(store, registry, logger)
@@ -1708,11 +1647,12 @@ export function deserializeWorkflow(relay: RelayWithActions): { nodes: Node[], e
 - Delete with confirmation modal
 - Iris-styled table with violet accents
 
-### 13.11 Connections Page (`src/app/dashboard/connections/page.tsx`)
+### 13.11 Secrets Page (`src/app/dashboard/secrets/page.tsx`)
 
-- List connected OAuth providers with account email
-- "Connect Google" / "Connect Microsoft" buttons
-- Disconnect button with confirmation
+- List of secret names (values never shown)
+- Add secret form (name + value, value masked)
+- Delete with confirmation modal
+- Iris-styled table with violet accents
 
 ### 13.12 API Client Layer (`src/lib/`)
 
@@ -2390,11 +2330,19 @@ This is marked as **future work** and is not required for the initial Iris relea
 
 ---
 
-## 17. Phase 9 — Testing & Hardening
+## 17. Phase 9 — ~~Testing & Hardening~~ *(deferred — post-hackathon)*
 
-**Goal:** Build confidence in correctness, safety, and reliability across all layers.
+Unit tests, integration tests, load testing, and security hardening are intentionally deferred for the hackathon. The focus is on shipping a working, demo-able product.
 
-**Duration:** 1 week (runs in parallel with the last week of Phase 8)
+Key areas to revisit after the hackathon:
+- `pkg/dag` cycle detection tests
+- `pkg/templateengine` resolution tests
+- `pkg/encryptor` round-trip + tamper tests
+- `iris-core` handler tests (auth, relay CRUD, cycle detection)
+- `iris-worker` DAG executor unit tests
+- End-to-end webhook → execution integration test
+
+
 
 ### 17.1 Unit Tests — `iris-common`
 
@@ -2530,299 +2478,10 @@ This is marked as **future work** and is not required for the initial Iris relea
 
 ---
 
-## 18. Phase 10 — Infrastructure, Docker & Deployment
+## 18. Phase 10 — ~~Infrastructure, Docker & Deployment~~ *(deferred — post-hackathon)*
 
-**Goal:** Make every service independently buildable, Dockerized, and composable for both local dev and production.
+Dockerfiles, Docker Compose, and production deployment are deferred. Run all services locally with `go run` during development.
 
-**Duration:** 3–4 days (runs alongside testing)
-
-### 18.1 Dockerfiles
-
-Each service has a multi-stage Dockerfile following the same pattern:
-
-```dockerfile
-# Example: services/iris-core/Dockerfile
-
-# Stage 1: Build
-FROM golang:1.22-alpine AS builder
-WORKDIR /app
-
-# Copy go.work and all module manifests first (layer cache)
-COPY go.work go.work.sum ./
-COPY packages/iris-common/go.mod packages/iris-common/go.sum ./packages/iris-common/
-COPY services/iris-core/go.mod services/iris-core/go.sum ./services/iris-core/
-
-RUN go work sync
-
-# Copy source
-COPY packages/iris-common/ ./packages/iris-common/
-COPY services/iris-core/ ./services/iris-core/
-
-# Build binary
-RUN go build -o /iris-core ./services/iris-core/cmd/api
-
-# Stage 2: Runtime
-FROM alpine:3.19
-RUN apk add --no-cache ca-certificates tzdata
-COPY --from=builder /iris-core /iris-core
-EXPOSE 3000
-ENTRYPOINT ["/iris-core"]
-```
-
-The same pattern applies to `iris-hooks`, `iris-worker`, and `iris-telegram` with their respective binary paths.
-
-### 18.2 Full Docker Compose
-
-```yaml
-# docker-compose.yml
-services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: iris-postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: iris
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U user -d iris"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  nats:
-    image: nats:latest
-    container_name: iris-nats
-    restart: unless-stopped
-    command: "-js -m 8222"
-    ports:
-      - "4222:4222"
-      - "8222:8222"
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8222/healthz"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-
-  iris-core:
-    build:
-      context: .
-      dockerfile: services/iris-core/Dockerfile
-    container_name: iris-core
-    restart: unless-stopped
-    env_file: .env
-    ports:
-      - "3000:3000"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      nats:
-        condition: service_healthy
-
-  iris-hooks:
-    build:
-      context: .
-      dockerfile: services/iris-hooks/Dockerfile
-    container_name: iris-hooks
-    restart: unless-stopped
-    env_file: .env
-    ports:
-      - "8080:8080"
-    depends_on:
-      nats:
-        condition: service_healthy
-
-  iris-worker:
-    build:
-      context: .
-      dockerfile: services/iris-worker/Dockerfile
-    container_name: iris-worker
-    restart: unless-stopped
-    env_file: .env
-    depends_on:
-      postgres:
-        condition: service_healthy
-      nats:
-        condition: service_healthy
-
-  iris-telegram:
-    build:
-      context: .
-      dockerfile: services/iris-telegram/Dockerfile
-    container_name: iris-telegram
-    restart: unless-stopped
-    env_file: .env
-    depends_on:
-      postgres:
-        condition: service_healthy
-      nats:
-        condition: service_healthy
-      iris-core:
-        condition: service_started
-
-  web:
-    build:
-      context: ./web
-      dockerfile: Dockerfile
-    container_name: iris-web
-    restart: unless-stopped
-    env_file: ./web/.env.local
-    ports:
-      - "3001:3001"
-    depends_on:
-      - iris-core
-
-volumes:
-  postgres_data:
-
-networks:
-  default:
-    name: iris-network
-```
-
-### 18.3 Web Dockerfile
-
-```dockerfile
-# web/Dockerfile
-FROM node:20-alpine AS builder
-WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm ci
-COPY . .
-RUN npm run build
-
-FROM node:20-alpine AS runner
-WORKDIR /app
-ENV NODE_ENV=production
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
-COPY --from=builder /app/public ./public
-EXPOSE 3001
-ENV PORT=3001
-CMD ["node", "server.js"]
-```
-
-### 18.4 Complete Makefile
-
-```makefile
-.PHONY: help infra-up infra-down infra-logs infra-clean \
-        db-migrate-up db-migrate-down db-migrate-create db-migrate-version \
-        db-migrate-force db-reset db-shell db-status \
-        setup check dev-core dev-hooks dev-worker dev-telegram dev-all dev-web \
-        build build-core build-hooks build-worker build-telegram \
-        docker-build docker-up docker-down \
-        test lint clean
-
-# Config
-DB_USER     := user
-DB_PASSWORD := password
-DB_NAME     := iris
-DB_HOST     := localhost
-DB_PORT     := 5432
-DB_URL      := postgres://$(DB_USER):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=disable
-POSTGRES_CONTAINER := iris-postgres
-MIGRATIONS_PATH    := services/iris-core/db/migrations
-
-# Colors
-GREEN  := \033[0;32m
-YELLOW := \033[0;33m
-RED    := \033[0;31m
-NC     := \033[0m
-
-help: ## Show this help
-	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  $(GREEN)%-22s$(NC) %s\n", $$1, $$2}' $(MAKEFILE_LIST)
-
-## Infrastructure
-infra-up:    ## Start Postgres + NATS
-	@docker compose up -d && sleep 3 && docker compose ps
-infra-down:  ## Stop infrastructure
-	@docker compose down
-infra-logs:  ## Tail infrastructure logs
-	@docker compose logs -f
-infra-clean: ## DANGER: stop + delete all volumes
-	@docker compose down -v
-
-## Database
-db-migrate-up:      ## Run all pending migrations
-	@migrate -path $(MIGRATIONS_PATH) -database "$(DB_URL)" up
-db-migrate-down:    ## Roll back last migration
-	@migrate -path $(MIGRATIONS_PATH) -database "$(DB_URL)" down 1
-db-migrate-version: ## Show current migration version
-	@migrate -path $(MIGRATIONS_PATH) -database "$(DB_URL)" version
-db-migrate-create:  ## Create migration pair (NAME=...)
-	@migrate create -ext sql -dir $(MIGRATIONS_PATH) -seq $(NAME)
-db-migrate-force:   ## Force version (VERSION=N)
-	@migrate -path $(MIGRATIONS_PATH) -database "$(DB_URL)" force $(VERSION)
-db-reset:    ## Drop all tables + re-run migrations
-	@migrate -path $(MIGRATIONS_PATH) -database "$(DB_URL)" drop -f && $(MAKE) db-migrate-up
-db-shell:    ## Open psql shell
-	@docker exec -it $(POSTGRES_CONTAINER) psql -U $(DB_USER) -d $(DB_NAME)
-db-status:   ## Show table row counts
-	@docker exec -i $(POSTGRES_CONTAINER) psql -U $(DB_USER) -d $(DB_NAME) -c \
-		"SELECT tablename, n_live_tup FROM pg_stat_user_tables ORDER BY n_live_tup DESC;"
-
-## Development
-dev-core:     ## Run iris-core API (port 3000)
-	@cd services/iris-core && go run cmd/api/main.go
-dev-hooks:    ## Run iris-hooks webhook server (port 8080)
-	@cd services/iris-hooks && go run cmd/server/main.go
-dev-worker:   ## Run iris-worker execution engine
-	@cd services/iris-worker && go run cmd/main.go
-dev-telegram: ## Run iris-telegram bot
-	@cd services/iris-telegram && go run cmd/bot/main.go
-dev-all:      ## Run all 4 backend services concurrently
-	@$(MAKE) -j4 dev-core dev-hooks dev-worker dev-telegram
-dev-web:      ## Run Next.js frontend (port 3001)
-	@cd web && npm run dev
-
-## Build
-build: ## Build all Go services into bin/
-	@mkdir -p bin
-	@go build -o bin/iris-core     ./services/iris-core/cmd/api
-	@go build -o bin/iris-hooks    ./services/iris-hooks/cmd/server
-	@go build -o bin/iris-worker   ./services/iris-worker/cmd
-	@go build -o bin/iris-telegram ./services/iris-telegram/cmd/bot
-	@echo "$(GREEN)Built: bin/$(NC)" && ls -lh bin/
-
-## Docker
-docker-build: ## Build all Docker images
-	@docker compose build
-docker-up:    ## Start full stack in Docker
-	@docker compose up -d
-docker-down:  ## Stop full Docker stack
-	@docker compose down
-
-## Setup
-setup: infra-up db-migrate-up ## First-time setup
-	@echo "$(GREEN)Setup complete!$(NC)"
-	@echo "  make dev-core     — API on :3000"
-	@echo "  make dev-hooks    — Webhooks on :8080"
-	@echo "  make dev-worker   — Worker"
-	@echo "  make dev-telegram — Telegram bot"
-	@echo "  make dev-web      — Frontend on :3001"
-
-check: ## Verify all infrastructure is healthy
-	@docker exec $(POSTGRES_CONTAINER) pg_isready -U $(DB_USER) -d $(DB_NAME) > /dev/null 2>&1 \
-		&& echo "$(GREEN)✓ Postgres$(NC)" || echo "$(RED)✗ Postgres$(NC)"
-	@curl -sf http://localhost:8222/healthz > /dev/null 2>&1 \
-		&& echo "$(GREEN)✓ NATS$(NC)" || echo "$(RED)✗ NATS$(NC)"
-	@migrate -version > /dev/null 2>&1 \
-		&& echo "$(GREEN)✓ migrate CLI$(NC)" || echo "$(RED)✗ migrate CLI not found$(NC)"
-
-## Quality
-test: ## Run all Go tests
-	@go test -race -count=1 ./...
-lint: ## Run golangci-lint
-	@golangci-lint run ./...
-clean: ## Remove build artifacts
-	@rm -rf bin/
-
-.DEFAULT_GOAL := help
-```
 
 ---
 
@@ -2831,114 +2490,82 @@ clean: ## Remove build artifacts
 This is the strict build order. Each item depends on everything before it.
 
 ```
-WEEK 1 — Foundation
-  [ ] Phase 0: Rename Hermes → Iris (module names, imports, docker, makefile)
-  [ ] Phase 0: .env.example, go.work with iris-telegram added
-  [ ] Phase 1: iris-common/pkg/logger
-  [ ] Phase 1: iris-common/pkg/encryptor
-  [ ] Phase 1: iris-common/pkg/cronutil
-  [ ] Phase 1: iris-common/pkg/dag (dag.go + dag_test.go + scheduler.go + scheduler_test.go)
-  [ ] Phase 1: iris-common/pkg/templateengine (engine.go + engine_test.go)
-  [ ] Phase 1: iris-common/pkg/oauth
-  [ ] Phase 1: iris-common/pkg/actions (all 6 action types with FieldSpec)
+SPRINT 1 — Foundation
+  [ ] Phase 0: Scaffold repo — go.work, .env.example, Makefile
+  [ ] Phase 1: packages/logger
+  [ ] Phase 1: packages/encryptor
+  [ ] Phase 1: packages/cronutil
+  [ ] Phase 1: packages/dag (dag.go + scheduler.go)
+  [ ] Phase 1: packages/templateengine (engine.go)
+  [ ] Phase 1: packages/actions (all action types with FieldSpec — no oauth)
 
-WEEK 2 — Core API
-  [ ] Phase 2: iris-core config
-  [ ] Phase 2: iris-core DB connection (pgxpool)
-  [ ] Phase 2: iris-core migrations 000001 through 000009
-  [ ] Phase 2: iris-core models (incl. AIRelayRequest/Response)
-  [ ] Phase 2: iris-core user_store
-  [ ] Phase 2: iris-core secret_store
-  [ ] Phase 2: iris-core connections_store
-  [ ] Phase 2: iris-core relay_store (with DAG edge support)
-  [ ] Phase 2: iris-core NATS publisher
-  [ ] Phase 2: iris-core interfaces.go
-  [ ] Phase 2: iris-core middleware (JWT)
-  [ ] Phase 2: iris-core auth_handlers
-  [ ] Phase 2: iris-core oauth_handlers
-  [ ] Phase 2: iris-core handlers (relay CRUD + executions + secrets + connections)
-  [ ] Phase 2: iris-core LLM client + prompts + parser (ai/ package)
-  [ ] Phase 2: iris-core ai_handlers (POST /api/v1/ai/relay)
-  [ ] Phase 2: iris-core router
-  [ ] Phase 2: iris-core main.go
+SPRINT 2 — Core API
+  [ ] Phase 2: services/core config
+  [ ] Phase 2: services/core DB connection (pgxpool)
+  [ ] Phase 2: services/core migrations 000001 through 000009
+  [ ] Phase 2: services/core models (incl. AIRelayRequest/Response)
+  [ ] Phase 2: services/core user_store
+  [ ] Phase 2: services/core secret_store
+  [ ] Phase 2: services/core relay_store (with DAG edge support)
+  [ ] Phase 2: services/core NATS publisher
+  [ ] Phase 2: services/core interfaces.go
+  [ ] Phase 2: services/core middleware (JWT)
+  [ ] Phase 2: services/core auth_handlers
+  [ ] Phase 2: services/core handlers (relay CRUD + executions + secrets)
+  [ ] Phase 2: services/core LLM client + prompts + parser (internal/ai/)
+  [ ] Phase 2: services/core ai_handlers (POST /api/v1/ai/relay)
+  [ ] Phase 2: services/core router
+  [ ] Phase 2: services/core main.go
 
-WEEK 2-3 — Hooks + Worker
-  [ ] Phase 3: iris-hooks (config, handler, NATS publisher, main.go)
-  [ ] Phase 4: iris-worker config
-  [ ] Phase 4: iris-worker store (GetRelayGraph, GetSecret, execution tracking)
-  [ ] Phase 4: iris-worker registry
-  [ ] Phase 4: iris-worker integration — debug
-  [ ] Phase 4: iris-worker integration — discord
-  [ ] Phase 4: iris-worker integration — slack
-  [ ] Phase 4: iris-worker integration — httpreq
-  [ ] Phase 4: iris-worker integration — email
-  [ ] Phase 4: iris-worker integration — condition (NEW)
-  [ ] Phase 4: iris-worker executor (DAG wave-parallel process())
-  [ ] Phase 4: iris-worker worker_pool
-  [ ] Phase 4: iris-worker cron_scheduler
-  [ ] Phase 4: iris-worker NATS consumer
-  [ ] Phase 4: iris-worker main.go
+SPRINT 3 — Hooks + Worker
+  [ ] Phase 3: services/hooks (config, handler, NATS publisher, main.go)
+  [ ] Phase 4: services/worker config
+  [ ] Phase 4: services/worker store (GetRelayGraph, GetSecret, execution tracking)
+  [ ] Phase 4: services/worker registry
+  [ ] Phase 4: services/worker integration — debug
+  [ ] Phase 4: services/worker integration — discord
+  [ ] Phase 4: services/worker integration — slack
+  [ ] Phase 4: services/worker integration — httpreq (url, method, headers, body)
+  [ ] Phase 4: services/worker integration — email
+  [ ] Phase 4: services/worker integration — condition
+  [ ] Phase 4: services/worker executor (DAG wave-parallel process())
+  [ ] Phase 4: services/worker worker_pool
+  [ ] Phase 4: services/worker cron_scheduler
+  [ ] Phase 4: services/worker NATS consumer
+  [ ] Phase 4: services/worker main.go
 
-WEEK 3-4 — Frontend Revamp
-  [ ] Phase 5: globals.css — Iris design tokens (replace all orange)
-  [ ] Phase 5: src/components/ui/ — Button, Input, Card, Badge, Modal, Spinner
-  [ ] Phase 5: src/app/layout.tsx — Inter + JetBrains Mono fonts
-  [ ] Phase 5: src/app/page.tsx — Iris landing page rebrand
+SPRINT 4 — Frontend Revamp
+  [ ] Phase 5: globals.css — Iris design tokens
+  [ ] Phase 5: components/ui/ — Button, Input, Card, Badge, Modal, Spinner
+  [ ] Phase 5: app/layout.tsx — Inter + JetBrains Mono fonts
+  [ ] Phase 5: app/page.tsx — Iris landing page
   [ ] Phase 5: (auth)/login + register pages
-  [ ] Phase 5: sidebar.tsx — Iris brand, violet active state, AI Assistant nav item
-  [ ] Phase 5: dashboard/layout.tsx — three-panel layout (sidebar + main + AI panel)
-  [ ] Phase 5: relay list page
-  [ ] Phase 5: relay detail page
-  [ ] Phase 5: visual DAG builder — Iris-styled nodes, animated edges, toolbar
+  [ ] Phase 5: sidebar.tsx — Iris brand, violet active state, AI Assistant nav
+  [ ] Phase 5: dashboard/layout.tsx — three-panel layout
+  [ ] Phase 5: relay list, relay detail, visual DAG builder
   [ ] Phase 5: secrets page
-  [ ] Phase 5: connections page
-  [ ] Phase 5: api.ts, api-dag.ts, queries.ts
-  [ ] Phase 5: workflow-serializer.ts
+  [ ] Phase 5: api.ts, api-dag.ts, queries.ts, workflow-serializer.ts
 
-WEEK 4-5 — Web LLM Chat
-  [ ] Phase 6: src/lib/api-ai.ts
-  [ ] Phase 6: src/types/ai.ts
-  [ ] Phase 6: src/context/ai-chat-context.tsx
-  [ ] Phase 6: src/components/ai-chat/chat-input.tsx
-  [ ] Phase 6: src/components/ai-chat/chat-message.tsx
-  [ ] Phase 6: src/components/ai-chat/relay-preview.tsx
-  [ ] Phase 6: src/components/ai-chat/chat-panel.tsx
-  [ ] Phase 6: execution-dag.tsx (color-coded execution visualization)
+SPRINT 5 — Web LLM Chat
+  [ ] Phase 6: lib/api-ai.ts
+  [ ] Phase 6: types/ai.ts
+  [ ] Phase 6: context/ai-chat-context.tsx
+  [ ] Phase 6: components/ai-chat/ (chat-input, chat-message, relay-preview, chat-panel)
+  [ ] Phase 6: workflow/execution-dag.tsx
 
-WEEK 5-6 — Telegram Bot
-  [ ] Phase 7: iris-telegram service scaffold + go.mod + go.work entry
-  [ ] Phase 7: config
-  [ ] Phase 7: iris-telegram store (telegram_links DB queries)
-  [ ] Phase 7: internal/iris/client.go
-  [ ] Phase 7: internal/ai/client.go + prompts.go + parser.go
-  [ ] Phase 7: internal/bot/session.go (SessionManager + state machine)
-  [ ] Phase 7: internal/bot/handlers.go (command + message dispatch)
-  [ ] Phase 7: internal/bot/bot.go (setup + Start loop)
-  [ ] Phase 7: internal/bot/notifier.go (NATS subscription for push notifications)
-  [ ] Phase 7: templates.go (quick-start relay templates)
+SPRINT 6 — Telegram Bot
+  [ ] Phase 7: services/iris-telegram scaffold
+  [ ] Phase 7: internal/config, internal/iris/client.go
+  [ ] Phase 7: internal/ai/ (client, prompts, parser)
+  [ ] Phase 7: internal/bot/session.go, handlers.go, bot.go
+  [ ] Phase 7: internal/bot/notifier.go (NATS push notifications)
   [ ] Phase 7: cmd/bot/main.go
-  [ ] Phase 7: Dockerfile for iris-telegram
 
-WEEK 6-7 — Notifications + Testing
-  [ ] Phase 8: iris-worker publishes ExecutionNotification to NATS
-  [ ] Phase 8: iris-telegram Notifier subscribes and sends Telegram messages
-  [ ] Phase 9: All dag package unit tests passing
-  [ ] Phase 9: All templateengine unit tests passing
-  [ ] Phase 9: All encryptor unit tests passing
-  [ ] Phase 9: iris-core handler tests (create relay, cycle detection, auth)
-  [ ] Phase 9: iris-worker process() unit tests
-  [ ] Phase 9: End-to-end webhook trigger integration test
-  [ ] Phase 9: End-to-end DAG parallel execution integration test
-  [ ] Phase 9: Backwards-compat test (linear relay with no edges)
-  [ ] Phase 9: Security checklist review
-
-WEEK 7 — Infrastructure
-  [ ] Phase 10: Dockerfiles for all 4 Go services + web
-  [ ] Phase 10: docker-compose.yml with health checks + depends_on
-  [ ] Phase 10: Full Makefile (all targets)
-  [ ] Phase 10: .env.example complete and documented
-  [ ] Phase 10: README.md updated for Iris (setup, architecture, env vars)
+SPRINT 7 — Notifications
+  [ ] Phase 8: services/worker publishes ExecutionNotification to NATS
+  [ ] Phase 8: services/iris-telegram Notifier subscribes + sends Telegram messages
 ```
+
 
 ---
 
@@ -2949,12 +2576,11 @@ WEEK 7 — Infrastructure
 | `000001_init` | Users, relays (linear), relay_actions, execution_logs | ✅ Exists |
 | `000002_processed_events` | Deduplication table | ✅ Exists |
 | `000003_secrets` | AES-encrypted secret store | ✅ Exists |
-| `000004_connections` | OAuth token storage | ✅ Exists |
 | `000005_exec_steps` | Executions + execution_steps tables | ✅ Exists |
 | `000006_cron_manual` | trigger_type, trigger_config, next_run_at on relays | ✅ Exists |
 | `000007_dag_edges` | node_id on relay_actions, relay_edges table | ✅ Exists |
 | `000008_telegram_links` | telegram_links table for bot user linking | 🔲 To build |
-| `000009_ai_sessions` | ai_sessions table for persistent LLM history | 🔲 To build |
+| `000009_ai_sessions` | ai_sessions for persistent LLM history | 🔲 To build |
 
 All migrations live in `services/iris-core/db/migrations/` and are run with:
 
@@ -2986,14 +2612,12 @@ make db-migrate-down   # rolls back the most recent one
 
 | Action | File |
 |---|---|
-| Verify / Update | `pkg/logger/logger.go` |
-| Verify / Update | `pkg/encryptor/encryptor.go` |
-| Verify / Update | `pkg/cronutil/cronutil.go` |
-| Verify / Update | `pkg/dag/dag.go` + `dag_test.go` |
-| Create | `pkg/dag/scheduler.go` + `scheduler_test.go` |
-| Verify / Update | `pkg/templateengine/engine.go` + `engine_test.go` |
-| Verify / Update | `pkg/oauth/oauth.go` |
-| Update | `pkg/actions/actions.go` — add `condition` action type |
+| Verify / Update | `packages/logger/logger.go` |
+| Verify / Update | `packages/encryptor/encryptor.go` |
+| Verify / Update | `packages/cronutil/cronutil.go` |
+| Verify / Update | `packages/dag/dag.go` + `scheduler.go` |
+| Verify / Update | `packages/templateengine/engine.go` |
+| Update | `packages/actions/actions.go` — add `condition` action type |
 
 ### Phase 2 — `iris-core`
 
@@ -3060,8 +2684,6 @@ make db-migrate-down   # rolls back the most recent one
 | Action | File |
 |---|---|
 | Create | `services/iris-telegram/go.mod` |
-| Create | `services/iris-telegram/Dockerfile` |
-| Create | `services/iris-telegram/.env` |
 | Create | `services/iris-telegram/cmd/bot/main.go` |
 | Create | `services/iris-telegram/internal/config/config.go` |
 | Create | `services/iris-telegram/internal/store/telegram_store.go` |
@@ -3075,18 +2697,9 @@ make db-migrate-down   # rolls back the most recent one
 | Create | `services/iris-telegram/internal/bot/notifier.go` |
 | Create | `services/iris-telegram/internal/bot/templates.go` |
 
-### Phase 10 — Infrastructure
+### Phase 10 — Infrastructure *(deferred)*
 
-| Action | File |
-|---|---|
-| Rewrite | `docker-compose.yml` — all 5 services + web |
-| Create | `services/iris-core/Dockerfile` |
-| Create | `services/iris-hooks/Dockerfile` |
-| Create | `services/iris-worker/Dockerfile` |
-| Create | `services/iris-telegram/Dockerfile` |
-| Create | `web/Dockerfile` |
-| Rewrite | `Makefile` — complete target set |
-| Update | `README.md` — Iris branding, full setup guide |
+Dockerfiles, docker-compose.yml, and full Makefile will be added post-hackathon.
 
 ---
 
