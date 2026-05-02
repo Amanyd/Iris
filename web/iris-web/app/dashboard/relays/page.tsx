@@ -1,6 +1,6 @@
 "use client";
 
-import { Workflow, Plus, Play, Square, Trash2, Loader2, X, ChevronLeft, Save, FileText } from "lucide-react";
+import { Workflow, Plus, Play, Square, Trash2, Loader2, X, ChevronLeft, Save, FileText, Copy, CheckCircle, Link } from "lucide-react";
 import { useEffect, useState, useCallback } from "react";
 import * as api from "@/lib/api";
 import { WorkflowCanvas } from "@/components/workflow/WorkflowCanvas";
@@ -295,11 +295,23 @@ function RelayCard({
   onTrigger: () => void;
   onDelete: () => void;
 }) {
+  const [copied, setCopied] = useState(false);
   const status = relay.is_active ? "ACTIVE" : "IDLE";
   const statusColors: Record<string, string> = {
     ACTIVE: "text-iris-success bg-iris-success/10 border-iris-success/30",
     IDLE: "text-iris-warning bg-iris-warning/10 border-iris-warning/30",
   };
+
+  const isWebhook = relay.trigger_type === "webhook";
+  const webhookUrl = isWebhook ? `http://localhost:8080/hooks/${relay.id}` : null;
+
+  function copyUrl(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (!webhookUrl) return;
+    navigator.clipboard?.writeText(webhookUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
 
   return (
     <div
@@ -326,7 +338,7 @@ function RelayCard({
         <p className="text-xs text-iris-secondary mb-3 truncate">{relay.description}</p>
       )}
 
-      <div className="space-y-1.5 mb-5 text-xs font-mono text-iris-secondary">
+      <div className="space-y-1.5 mb-4 text-xs font-mono text-iris-secondary">
         <div className="flex justify-between">
           <span className="uppercase opacity-50">Trigger</span>
           <span className="text-white uppercase">{relay.trigger_type}</span>
@@ -344,6 +356,39 @@ function RelayCard({
           <span className="text-white">{new Date(relay.updated_at).toLocaleDateString()}</span>
         </div>
       </div>
+
+      {/* Webhook URL — only for webhook-triggered relays */}
+      {isWebhook && webhookUrl && (
+        <div
+          className="mb-4 border border-iris-accent/20 bg-iris-accent/5 p-3 space-y-2"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5 text-[9px] font-black tracking-widest text-iris-accent uppercase">
+              <Link className="w-3 h-3" />
+              Webhook URL
+            </div>
+            <button
+              onClick={copyUrl}
+              className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 border transition-colors"
+              style={{
+                color: copied ? "var(--iris-success)" : "var(--iris-accent-core)",
+                borderColor: copied ? "rgba(16,185,129,0.3)" : "rgba(16,185,129,0.3)",
+                background: copied ? "rgba(16,185,129,0.1)" : "transparent",
+              }}
+            >
+              {copied ? <CheckCircle className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+              {copied ? "Copied!" : "Copy"}
+            </button>
+          </div>
+          <code className="block text-[10px] font-mono text-iris-accent break-all leading-relaxed select-all">
+            {webhookUrl}
+          </code>
+          <div className="text-[9px] text-iris-muted leading-relaxed">
+            Send a POST request to this URL to trigger the relay.
+          </div>
+        </div>
+      )}
 
       {/* Hint */}
       <div className="text-[10px] text-iris-border-strong group-hover:text-iris-accent transition-colors mb-3 flex items-center gap-1">
@@ -378,3 +423,4 @@ function RelayCard({
     </div>
   );
 }
+

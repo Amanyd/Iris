@@ -43,7 +43,7 @@ func (e *Executor) Execute(
 		return nil, fmt.Errorf("condition: expr is required")
 	}
 
-	result, err := evalExpr(strings.TrimSpace(expr), prevOutputs)
+	result, err := evalExpr(strings.TrimSpace(expr), payload, prevOutputs)
 	if err != nil {
 		return nil, fmt.Errorf("condition: %w", err)
 	}
@@ -57,7 +57,7 @@ func (e *Executor) Execute(
 // operators in order of specificity (longer operators first to avoid prefix ambiguity)
 var operators = []string{">=", "<=", "!=", ">", "<", "==", " contains ", " exists"}
 
-func evalExpr(expr string, outputs map[string]engine.StepOutput) (bool, error) {
+func evalExpr(expr string, payload []byte, outputs map[string]engine.StepOutput) (bool, error) {
 	lower := strings.ToLower(strings.TrimSpace(expr))
 
 	// Literal booleans
@@ -71,7 +71,7 @@ func evalExpr(expr string, outputs map[string]engine.StepOutput) (bool, error) {
 	// "exists <value>" — check if value is present and non-empty
 	if strings.HasPrefix(lower, "exists ") {
 		ref := strings.TrimSpace(expr[7:])
-		val := resolveValue(ref, outputs)
+		val := resolveValue(ref, payload, outputs)
 		return isPresent(val), nil
 	}
 
@@ -85,14 +85,24 @@ func evalExpr(expr string, outputs map[string]engine.StepOutput) (bool, error) {
 		}
 		left := strings.TrimSpace(expr[:idx])
 		right := strings.TrimSpace(expr[idx+len(padded):])
-		return compare(left, right, op, outputs)
+		return compare(left, right, op, payload, outputs)
 	}
 
 	// "contains" operator (case-insensitive keyword, not a symbol)
 	if ci := strings.Index(strings.ToLower(expr), " contains "); ci != -1 {
 		left := strings.TrimSpace(expr[:ci])
 		right := strings.TrimSpace(expr[ci+10:])
-		lv := fmt.Sprintf("%v", resolveValue(left, outputs))
+		
+		// When evaluating contains on a complex object (like payload.issue.labels),
+		// it's safer to check the JSON representation so we don't depend on Go map formatting.
+		leftVal := resolveValue(left, payload, outputs)
+		var lv string
+		if b, err := json.Marshal(leftVal); err == nil && string(b) != "null" {
+			lv = string(b)
+		} else {
+			lv = fmt.Sprintf("%v", leftVal)
+		}
+		
 		rv := unquote(right)
 		return strings.Contains(lv, rv), nil
 	}
@@ -104,8 +114,8 @@ func evalExpr(expr string, outputs map[string]engine.StepOutput) (bool, error) {
 }
 
 // compare evaluates a two-operand expression with the given operator.
-func compare(leftRef, rightRef, op string, outputs map[string]engine.StepOutput) (bool, error) {
-	leftVal := resolveValue(leftRef, outputs)
+func compare(leftRef, rightRef, op string, payload []byte, outputs map[string]engine.StepOutput) (bool, error) {
+	leftVal := resolveValue(leftRef, payload, outputs)
 	rightLit := unquote(rightRef)
 
 	leftStr := fmt.Sprintf("%v", leftVal)
@@ -153,10 +163,31 @@ func compare(leftRef, rightRef, op string, outputs map[string]engine.StepOutput)
 // ─── Value resolution ─────────────────────────────────────────────────────────
 
 // resolveValue resolves a step output reference or returns the literal string.
-func resolveValue(s string, outputs map[string]engine.StepOutput) any {
+func resolveValue(s string, payload []byte, outputs map[string]engine.StepOutput) any {
 	s = strings.TrimSpace(s)
 
+	if strings.HasPrefix(s, "payload") {
+		var payloadMap map[string]any
+		if len(payload) > 0 {
+			_ = json.Unmarshal(payload, &payloadMap)
+		}
+		if s == "payload" {
+			if payloadMap != nil {
+				return payloadMap
+			}
+			return string(payload)
+		}
+		if strings.HasPrefix(s, "payload.") {
+			path := strings.TrimPrefix(s, "payload.")
+			return deepGet(payloadMap, strings.Split(path, "."))
+		}
+	}
+
 	if !strings.HasPrefix(s, "steps[") {
+		// if it's a failed template resolution like {{payload.foo}}, treat as non-existent
+		if strings.HasPrefix(s, "{{") && strings.HasSuffix(s, "}}") {
+			return nil
+		}
 		return s
 	}
 
@@ -191,20 +222,31 @@ func resolveValue(s string, outputs map[string]engine.StepOutput) any {
 	return nil
 }
 
-// deepGet traverses a nested map[string]any by path segments.
-func deepGet(m map[string]any, path []string) any {
-	if m == nil || len(path) == 0 {
+// deepGet traverses a nested map[string]any or []any by path segments.
+func deepGet(v any, path []string) any {
+	if v == nil || len(path) == 0 {
 		return nil
 	}
-	val, ok := m[path[0]]
-	if !ok {
-		return nil
-	}
-	if len(path) == 1 {
-		return val
-	}
-	if nested, ok := val.(map[string]any); ok {
-		return deepGet(nested, path[1:])
+	switch val := v.(type) {
+	case map[string]any:
+		next, ok := val[path[0]]
+		if !ok {
+			return nil
+		}
+		if len(path) == 1 {
+			return next
+		}
+		return deepGet(next, path[1:])
+	case []any:
+		idx, err := strconv.Atoi(path[0])
+		if err != nil || idx < 0 || idx >= len(val) {
+			return nil
+		}
+		next := val[idx]
+		if len(path) == 1 {
+			return next
+		}
+		return deepGet(next, path[1:])
 	}
 	return nil
 }

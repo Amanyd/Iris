@@ -148,7 +148,170 @@ Key points:
 - Only wire the TRUE branch edge if you only want to act when the condition is true.
 - Wire a FALSE branch edge too if you want a different action when the condition is false.
 - Always set order_index sequentially (0, 1, 2, ...).
+
+## Webhook Trigger — Payload Reference
+
+When trigger_type is "webhook", the relay fires when a POST hits /hooks/<relay_id>.
+The incoming JSON body is available via {{payload.*}} template expressions.
+
+### Payload expression syntax
+
+  {{payload}}                        → full raw payload
+  {{payload.action}}                 → top-level field "action"
+  {{payload.issue.title}}            → nested field
+  {{payload.commits.0.message}}      → array index 0
+
+Use these in action configs (message, body, url fields) and in condition expr fields.
+
+### exists operator — check if a field is present
+
+  expr: "payload.label.name exists"
+
+This is the key tool for differentiating webhook event types. For example:
+- GitHub "labeled" events have payload.label.name
+- GitHub "opened" events do NOT have payload.label
+
+### Webhook deduplication pattern (CRITICAL for GitHub issues)
+
+When GitHub creates an issue with a label, it fires TWO events:
+  1. action="opened"  (payload.label does NOT exist)
+  2. action="labeled" (payload.label.name = "bug" etc.)
+
+Correct design to avoid double-processing:
+
+  Condition A: payload.label.name exists
+    TRUE  → "labeled" branch (label was added)
+    FALSE → Condition B: payload.action == opened
+              TRUE  → "opened" branch (issue created, no label)
+              FALSE → (leave unconnected — skip other events)
+
+NEVER use action=="opened" as the sole branch when labels may also fire.
+
+### GitHub payload field catalog
+
+Common across all events:
+  payload.action                      → event action (opened, closed, labeled, reopened, synchronize…)
+  payload.repository.full_name        → "owner/repo"
+  payload.repository.html_url         → repo URL
+  payload.sender.login                → actor username
+  payload.sender.avatar_url           → actor avatar
+
+Issues events (action: opened, edited, closed, labeled, unlabeled, assigned, reopened):
+  payload.issue.number                → issue number
+  payload.issue.title                 → issue title
+  payload.issue.body                  → issue description
+  payload.issue.state                 → "open" or "closed"
+  payload.issue.html_url              → direct link to issue
+  payload.issue.user.login            → issue author
+  payload.issue.labels                → array of label objects
+  payload.issue.assignees             → array of assigned users
+  payload.label.name                  → label name (labeled/unlabeled events ONLY)
+  payload.label.color                 → label hex color (labeled events ONLY)
+
+Pull Request events (action: opened, closed, merged, labeled, synchronize…):
+  payload.pull_request.number         → PR number
+  payload.pull_request.title          → PR title
+  payload.pull_request.body           → PR description
+  payload.pull_request.state          → "open" or "closed"
+  payload.pull_request.merged         → true if merged
+  payload.pull_request.html_url       → PR link
+  payload.pull_request.user.login     → PR author
+  payload.pull_request.head.ref       → source branch
+  payload.pull_request.base.ref       → target branch
+
+Push events:
+  payload.ref                         → "refs/heads/main"
+  payload.before / payload.after      → commit SHAs
+  payload.commits.0.message           → first commit message
+  payload.commits.0.author.name       → first commit author
+  payload.pusher.name                 → who pushed
+
+### Stripe payload field catalog
+
+  payload.type                        → event type e.g. "payment_intent.succeeded"
+  payload.data.object.id              → object ID
+  payload.data.object.amount          → amount in CENTS (multiply by 100 for dollars)
+  payload.data.object.currency        → "usd", "eur" etc.
+  payload.data.object.status          → object status
+  payload.data.object.customer        → customer ID
+  payload.data.object.description     → description
+  payload.data.object.metadata        → custom metadata map
+
+### Notion payload field catalog
+
+  payload.type                        → event type ("page.created" etc.)
+  payload.data.id                     → page/database ID
+  payload.data.url                    → page URL
+  payload.data.properties             → page properties object
+  payload.data.parent.database_id     → parent database ID
+  payload.data.created_by.id          → creator user ID
+
+## Worked Example A — GitHub Issue Labeling → Discord
+
+User: "When someone opens a GitHub issue labeled 'urgent', send a Discord message. If opened without a label, send a different message."
+
+Correct relay JSON:
+{
+  "name": "GitHub Issue Handler",
+  "description": "Routes GitHub issue events by whether a label was applied",
+  "trigger_type": "webhook",
+  "trigger_config": {},
+  "actions": [
+    {"node_id": "check-label",   "action_type": "condition",    "order_index": 0,
+     "config": {"expr": "payload.label.name exists"}},
+    {"node_id": "check-opened",  "action_type": "condition",    "order_index": 1,
+     "config": {"expr": "payload.action == opened"}},
+    {"node_id": "notify-labeled","action_type": "discord_send", "order_index": 2,
+     "config": {"webhook_url_ref": "DISCORD_WEBHOOK",
+                "message": "🏷️ Issue #{{payload.issue.number}} labeled '{{payload.label.name}}': {{payload.issue.title}}\n{{payload.issue.html_url}}"}},
+    {"node_id": "notify-opened", "action_type": "discord_send", "order_index": 3,
+     "config": {"webhook_url_ref": "DISCORD_WEBHOOK",
+                "message": "🆕 New issue #{{payload.issue.number}} by {{payload.issue.user.login}}: {{payload.issue.title}}\n{{payload.issue.html_url}}"}}
+  ],
+  "edges": [
+    {"parent_node_id": "check-label",   "child_node_id": "notify-labeled", "condition": {"result": true}},
+    {"parent_node_id": "check-label",   "child_node_id": "check-opened",   "condition": {"result": false}},
+    {"parent_node_id": "check-opened",  "child_node_id": "notify-opened",  "condition": {"result": true}}
+  ]
+}
+
+## Worked Example B — Stripe payment over threshold → Slack
+
+User: "When a Stripe payment succeeds and is over $50, send a Slack message with the amount."
+
+{
+  "name": "Stripe High-Value Payment Alert",
+  "description": "Alerts Slack when a payment intent succeeds over $50",
+  "trigger_type": "webhook",
+  "trigger_config": {},
+  "actions": [
+    {"node_id": "check-type",   "action_type": "condition",  "order_index": 0,
+     "config": {"expr": "payload.type == payment_intent.succeeded"}},
+    {"node_id": "check-amount", "action_type": "condition",  "order_index": 1,
+     "config": {"expr": "payload.data.object.amount >= 5000"}},
+    {"node_id": "notify-slack", "action_type": "slack_send", "order_index": 2,
+     "config": {"webhook_url_ref": "SLACK_WEBHOOK",
+                "message": "💳 Payment of ${{payload.data.object.amount}} {{payload.data.object.currency}} succeeded (ID: {{payload.data.object.id}})"}}
+  ],
+  "edges": [
+    {"parent_node_id": "check-type",   "child_node_id": "check-amount", "condition": {"result": true}},
+    {"parent_node_id": "check-amount", "child_node_id": "notify-slack",  "condition": {"result": true}}
+  ]
+}
+
+Note: Stripe amounts are in cents. $50 = 5000 cents.
+
+## Secret-asking rules for webhook relays
+
+If the user needs to send to Discord/Slack/email and has NO matching secret:
+- Generate the relay anyway with the correct _ref field name (e.g. "DISCORD_WEBHOOK")
+- In your message field, tell them: "You'll need to add a secret named DISCORD_WEBHOOK in Settings → Secrets → Vault"
+- Set ready=true — the relay structure is complete even if secrets aren't stored yet
+
+If they DO have a matching secret, reference it automatically.
 `)
+
+
 
 	// ── Existing relays ───────────────────────────────────────────────────────
 	sb.WriteString("## User's Existing Relays\n\n")

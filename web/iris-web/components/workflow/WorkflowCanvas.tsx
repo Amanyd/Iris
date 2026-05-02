@@ -41,6 +41,27 @@ const nodeTypes = {
 const EMPTY_NODES: Node<IrisNodeData>[] = [];
 const EMPTY_EDGES: Edge[] = [];
 
+// Helper to recursively find all upstream nodes (ancestors) for a given node
+function getAncestors(targetId: string, nodes: Node<IrisNodeData>[], edges: Edge[]): Node<IrisNodeData>[] {
+  const ancestors = new Set<string>();
+  const queue = [targetId];
+
+  while (queue.length > 0) {
+    const curr = queue.shift()!;
+    const parents = edges.filter((e) => e.target === curr).map((e) => e.source);
+    for (const parent of parents) {
+      if (!ancestors.has(parent)) {
+        ancestors.add(parent);
+        queue.push(parent);
+      }
+    }
+  }
+
+  return Array.from(ancestors)
+    .map((id) => nodes.find((n) => n.id === id))
+    .filter((n): n is Node<IrisNodeData> => !!n);
+}
+
 interface WorkflowCanvasInnerProps {
   initialNodes?: Node<IrisNodeData>[];
   initialEdges?: Edge[];
@@ -254,12 +275,7 @@ function WorkflowCanvasInner({
           secrets={secrets}
           nodeTestPaths={nodeTestPaths}
           onTestComplete={handleTestComplete}
-          upstreamNodes={
-            edges
-              .filter((e) => e.target === selectedNode.id)
-              .map((e) => nodes.find((n) => n.id === e.source))
-              .filter((n): n is Node<IrisNodeData> => !!n && !n.data.nodeType?.startsWith("trigger_"))
-          }
+          upstreamNodes={getAncestors(selectedNode.id, nodes, edges)}
           onUpdate={handleConfigUpdate}
           onDelete={handleDeleteNode}
           onClose={() => setSelectedNode(null)}

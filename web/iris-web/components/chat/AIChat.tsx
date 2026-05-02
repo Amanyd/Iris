@@ -3,7 +3,7 @@
 import {
   Terminal, Send, Cpu, User, Loader2, Rocket, RefreshCw,
   GitBranch, Zap, Clock, Play, CheckCircle2,
-  ChevronDown, ChevronUp, X, Pencil, Mic, MicOff,
+  ChevronDown, ChevronUp, X, Pencil, Mic, MicOff, Copy, CheckCircle, Link,
 } from "lucide-react";
 import { useState, useRef, useEffect, useCallback } from "react";
 import * as api from "@/lib/api";
@@ -73,6 +73,43 @@ const TRIGGER_ICON: Record<string, React.ReactNode> = {
   manual:  <Play className="w-3 h-3" />,
 };
 
+
+// ─── Webhook URL box ─────────────────────────────────────────────────────────
+
+function WebhookUrlBox({ url }: { url: string }) {
+  const [copied, setCopied] = useState(false);
+  function copy() {
+    navigator.clipboard?.writeText(url);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+  return (
+    <div className="border border-iris-accent/30 bg-iris-accent/5 p-2 space-y-1.5">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest text-iris-accent">
+          <Link className="w-2.5 h-2.5" /> Webhook URL
+        </div>
+        <button
+          onClick={copy}
+          className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 border transition-colors"
+          style={{
+            color: copied ? "var(--iris-success)" : "var(--iris-accent-core)",
+            borderColor: "rgba(16,185,129,0.3)",
+            background: copied ? "rgba(16,185,129,0.1)" : "transparent",
+          }}
+        >
+          {copied ? <CheckCircle className="w-2.5 h-2.5" /> : <Copy className="w-2.5 h-2.5" />}
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+      <code className="block text-[9px] font-mono text-iris-accent break-all select-all leading-relaxed">
+        {url}
+      </code>
+      <div className="text-[8px] text-iris-muted">POST to this URL to trigger the relay.</div>
+    </div>
+  );
+}
+
 // ─── Relay Preview Card ───────────────────────────────────────────────────────
 
 function RelayPreviewCard({
@@ -89,8 +126,12 @@ function RelayPreviewCard({
   const [expanded, setExpanded] = useState(false);
 
   if (deployed) {
+    const webhookUrl = spec.trigger_type === "webhook" && deployedRelayId
+      ? `http://localhost:8080/hooks/${deployedRelayId}`
+      : null;
+
     return (
-      <div className="mt-3 border border-iris-success/40 bg-iris-success/5 p-3 space-y-1">
+      <div className="mt-3 border border-iris-success/40 bg-iris-success/5 p-3 space-y-2">
         <div className="flex items-center gap-2 text-iris-success text-[10px] font-black uppercase tracking-widest">
           <CheckCircle2 className="w-3.5 h-3.5" />
           {isUpdate ? "Relay updated" : "Relay deployed"}
@@ -99,6 +140,9 @@ function RelayPreviewCard({
           <div className="text-[9px] font-mono text-iris-secondary">
             ID: <span className="text-white">{deployedRelayId}</span>
           </div>
+        )}
+        {webhookUrl && (
+          <WebhookUrlBox url={webhookUrl} />
         )}
         <div className="text-[9px] text-iris-muted">Check <span className="text-iris-accent">Relay Matrix</span> to view it.</div>
       </div>
@@ -494,11 +538,32 @@ export function AIChat() {
         });
         await api.updateRelayActions(msg.targetRelayId, msg.relaySpec.actions, msg.relaySpec.edges);
         resultId = msg.targetRelayId;
-        setMessages(prev => [...prev, { role: "assistant", content: `🔄 "${msg.relaySpec!.name}" updated successfully!` }]);
+        const updateLines = [`🔄 "${msg.relaySpec!.name}" updated successfully!`];
+        if (msg.relaySpec.trigger_type === "webhook") {
+          updateLines.push(`🔗 Webhook URL: http://localhost:8080/hooks/${resultId}`);
+          updateLines.push(`Point your external service to this URL.`);
+        }
+        setMessages(prev => [...prev, {
+          role: "assistant",
+          content: updateLines.join("\n"),
+        }]);
       } else {
         const created = await api.createRelay(msg.relaySpec);
         resultId = created.id;
-        setMessages(prev => [...prev, { role: "assistant", content: `🚀 "${created.name}" deployed! Find it in Relay Matrix.` }]);
+        const createLines = [`🚀 "${created.name}" deployed!`];
+        if (created.trigger_type === "webhook") {
+          createLines.push(``);
+          createLines.push(`🔗 Webhook URL:`);
+          createLines.push(`http://localhost:8080/hooks/${resultId}`);
+          createLines.push(``);
+          createLines.push(`👆 Copy this URL and paste it into your external service (GitHub → Settings → Webhooks, Stripe → Developers → Webhooks, etc.)`);
+        } else {
+          createLines.push(`Find it in Relay Matrix.`);
+        }
+        setMessages(prev => [...prev, {
+          role: "assistant",
+          content: createLines.join("\n"),
+        }]);
       }
       setMessages(prev => prev.map(m => m === msg ? { ...m, deployed: true, deployedRelayId: resultId, error: undefined } : m));
       window.dispatchEvent(new CustomEvent("iris:relay-changed"));
