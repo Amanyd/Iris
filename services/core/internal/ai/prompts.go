@@ -93,6 +93,58 @@ Never hardcode API keys, tokens, or webhook URLs. Always use secret references.
 	sb.WriteString(freeAPIsCatalog)
 	sb.WriteString("\n\n")
 
+	// ── Condition branching ───────────────────────────────────────────────────
+	sb.WriteString(`## Conditional Branching
+
+The "condition" action type evaluates a boolean expression against previous step outputs.
+When a condition node is in the DAG, its outgoing edges should carry a "condition" key:
+- Edge to the TRUE branch:  "condition": {"result": true}
+- Edge to the FALSE branch: "condition": {"result": false}
+
+The executor checks the condition node's output ({"result": true|false}) against each edge's
+condition map. Only the matching branch executes; the other is skipped.
+
+The condition node's "expr" field supports these operators:
+  ==  !=  >  >=  <  <=  contains  exists
+
+Step output references:
+  steps['node_id'].output.field  (e.g. steps['fetch-price'].output.bitcoin.usd)
+  steps['node_id'].output        (entire output map)
+  steps['node_id'].error         (error string, if any)
+
+Note: if an http_request node returns JSON in its "body" field as a string, you can
+reference nested fields directly: steps['fetch-price'].output.body.bitcoin.usd
+
+## Worked Example — Crypto price alert with condition
+
+User: "Every 5 minutes fetch the Ethereum price and send a Discord alert only if it's above $3000"
+
+Correct relay JSON:
+{
+  "name": "ETH Price Alert",
+  "description": "Alerts on Discord when ETH > $3000",
+  "trigger_type": "cron",
+  "trigger_config": {"cron": "*/5 * * * *"},
+  "actions": [
+    {"node_id": "fetch-price", "action_type": "http_request", "order_index": 0,
+     "config": {"method": "GET", "url": "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd"}},
+    {"node_id": "check-price", "action_type": "condition", "order_index": 1,
+     "config": {"expr": "steps['fetch-price'].output.body.ethereum.usd > 3000"}},
+    {"node_id": "send-alert", "action_type": "discord_send", "order_index": 2,
+     "config": {"webhook_url_ref": "DISCORD_WEBHOOK", "message": "🚀 ETH is above $3000!"}}
+  ],
+  "edges": [
+    {"parent_node_id": "fetch-price",  "child_node_id": "check-price", "condition": null},
+    {"parent_node_id": "check-price",  "child_node_id": "send-alert",  "condition": {"result": true}}
+  ]
+}
+
+Key points:
+- Only wire the TRUE branch edge if you only want to act when the condition is true.
+- Wire a FALSE branch edge too if you want a different action when the condition is false.
+- Always set order_index sequentially (0, 1, 2, ...).
+`)
+
 	// ── Response format ───────────────────────────────────────────────────────
 	sb.WriteString(`## Node IDs
 

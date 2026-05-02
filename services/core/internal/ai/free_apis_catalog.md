@@ -3,22 +3,30 @@
 Use these APIs in `http_request` nodes when the user needs external data.
 No API keys required — all are free tier with generous rate limits.
 
-## Crypto Prices (CoinGecko)
+## Crypto Prices
+
+### CoinPaprika (preferred — more reliable free tier)
+
+- **Bitcoin price**:
+  GET `https://api.coinpaprika.com/v1/tickers/btc-bitcoin`
+  Response includes `quotes.USD.price` (a float).
+  Condition reference: `steps['fetch-price'].output.body.quotes.USD.price`
+
+- **Any coin**: Replace `btc-bitcoin` with the coin slug (e.g. `eth-ethereum`, `sol-solana`, `doge-dogecoin`)
+- **Rate limit**: 100 requests/hour on free tier. Safe for cron intervals >= 1 minute.
+
+### CoinGecko (alternative)
 
 - **Bitcoin price (USD)**:
   GET `https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd`
   Response: `{ "bitcoin": { "usd": 70123.45 } }`
-  Extract price: `{{steps['<node_id>'].output.body}}`  → parse JSON → `.bitcoin.usd`
+  Condition reference: `steps['fetch-price'].output.body.bitcoin.usd`
 
 - **Any coin price**:
   GET `https://api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies=usd`
-  Common coin IDs: bitcoin, ethereum, solana, dogecoin, cardano, polkadot, ripple
-  Response: `{ "<coin_id>": { "usd": <price> } }`
+  Common coin IDs: bitcoin, ethereum, solana, dogecoin, cardano
 
-- **Multiple coins at once**:
-  GET `https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana&vs_currencies=usd`
-
-- **Rate limit**: 10-30 requests/minute on free tier. Safe for cron intervals >= 5 minutes.
+- **Rate limit**: 10-30 requests/minute. Use CoinPaprika for higher frequency crons.
 
 ## Weather (wttr.in)
 
