@@ -1,26 +1,54 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Backgrounds: Ultra-clean Dark Mode (Vercel/Apple-style) */
+  --iris-bg-base:      #000000;
+  --iris-bg-surface:   #0A0A0A;
+  --iris-bg-elevated:  #111111;
+  --iris-bg-overlay:   #1A1A1A;
+
+  /* Refined Accents: Emerald / Sage Green & Soft Amber */
+  --iris-accent-core:  #10B981; /* Clean Emerald Green */
+  --iris-accent-sub:   #F59E0B; /* Subtle Amber/Gold */
+  
+  /* Borders *
+  --iris-border-subtle:  rgba(255, 255, 255, 0.08);
+  --iris-border-default: rgba(255, 255, 255, 0.12);
+  --iris-border-strong:  rgba(255, 255, 255, 0.20);
+
+  /* Text */
+  --iris-text-primary:   #EDEDED;
+  --iris-text-secondary: #A1A1AA;
+  --iris-text-muted:     #71717A;
+
+  /* Status */
+  --iris-success:  #10B981;
+  --iris-warning:  #F59E0B;
+  --iris-error:    #EF4444;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+  --color-iris-base: var(--iris-bg-base);
+  --color-iris-surface: var(--iris-bg-surface);
+  --color-iris-elevated: var(--iris-bg-elevated);
+  --color-iris-overlay: var(--iris-bg-overlay);
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-iris-accent: var(--iris-accent-core);
+  --color-iris-accent-sub: var(--iris-accent-sub);
+  
+  --color-iris-text: var(--iris-text-primary);
+  --color-iris-secondary: var(--iris-text-secondary);
+  --color-iris-muted: var(--iris-text-muted);
+  
+  --color-iris-border: var(--iris-border-subtle);
+  --color-iris-border-strong: var(--iris-border-strong);
+  
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-jetbrains-mono);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--iris-bg-base);
+  color: var(--iris-text-primary);
+  min-height: 100vh;
 }
