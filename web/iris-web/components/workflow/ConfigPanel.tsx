@@ -1,6 +1,6 @@
 "use client";
 
-import { X, Trash2, FlaskConical, Copy, CheckCircle, Loader2, ChevronRight, ChevronDown } from "lucide-react";
+import { X, Trash2, FlaskConical, Copy, CheckCircle, Loader2, ChevronRight, ChevronDown, Webhook } from "lucide-react";
 
 import type { Node } from "@xyflow/react";
 import { NODE_TYPES_BY_TYPE } from "@/lib/workflow/node-types";
@@ -201,7 +201,93 @@ const OUTPUT_FIELDS: Record<string, { key: string; label: string }[]> = {
   email_send:   [{ key: "output.ok", label: "Success boolean" }],
   debug_log:    [{ key: "output.message", label: "Echoed message" }],
   condition:    [{ key: "output.result", label: "Boolean result" }],
+  // Webhook trigger — payload is passed directly, not via steps[...].output
+  trigger_webhook: [
+    { key: "payload",        label: "Full payload (raw)" },
+    { key: "payload.action", label: "Event action type" },
+  ],
 };
+
+// ─── Webhook payload templates for common services ────────────────────────────
+
+interface ServiceTemplate {
+  service: string;
+  icon: string;
+  color: string;
+  fields: { key: string; label: string; desc: string; group?: string }[];
+}
+
+const WEBHOOK_PAYLOAD_TEMPLATES: ServiceTemplate[] = [
+  {
+    service: "GitHub",
+    icon: "🐙",
+    color: "#8B5CF6",
+    fields: [
+      // Common
+      { group: "Common",         key: "payload.action",                  label: "action",                   desc: "Event action: opened, closed, labeled, reopened…" },
+      { group: "Common",         key: "payload.repository.full_name",     label: "repository.full_name",     desc: "owner/repo (e.g. octocat/hello-world)" },
+      { group: "Common",         key: "payload.repository.html_url",      label: "repository.html_url",      desc: "Repo URL" },
+      { group: "Common",         key: "payload.sender.login",             label: "sender.login",             desc: "Username of the actor" },
+      { group: "Common",         key: "payload.sender.avatar_url",        label: "sender.avatar_url",        desc: "Actor's avatar image URL" },
+      // Issues
+      { group: "Issues",         key: "payload.issue.number",             label: "issue.number",             desc: "Issue number" },
+      { group: "Issues",         key: "payload.issue.title",              label: "issue.title",              desc: "Issue title" },
+      { group: "Issues",         key: "payload.issue.body",               label: "issue.body",               desc: "Issue description body" },
+      { group: "Issues",         key: "payload.issue.state",              label: "issue.state",              desc: "open or closed" },
+      { group: "Issues",         key: "payload.issue.html_url",           label: "issue.html_url",           desc: "Link to the issue" },
+      { group: "Issues",         key: "payload.issue.user.login",         label: "issue.user.login",         desc: "Issue author username" },
+      { group: "Issues",         key: "payload.issue.labels",             label: "issue.labels",             desc: "Array of label objects" },
+      { group: "Issues",         key: "payload.issue.assignees",          label: "issue.assignees",          desc: "Array of assigned users" },
+      { group: "Issues",         key: "payload.label.name",               label: "label.name",               desc: "Label name (labeled / unlabeled events)" },
+      { group: "Issues",         key: "payload.label.color",              label: "label.color",              desc: "Label hex color (labeled events)" },
+      // Pull Requests
+      { group: "Pull Requests",  key: "payload.pull_request.number",      label: "pull_request.number",      desc: "PR number" },
+      { group: "Pull Requests",  key: "payload.pull_request.title",       label: "pull_request.title",       desc: "PR title" },
+      { group: "Pull Requests",  key: "payload.pull_request.body",        label: "pull_request.body",        desc: "PR description" },
+      { group: "Pull Requests",  key: "payload.pull_request.state",       label: "pull_request.state",       desc: "open or closed" },
+      { group: "Pull Requests",  key: "payload.pull_request.html_url",    label: "pull_request.html_url",    desc: "PR link" },
+      { group: "Pull Requests",  key: "payload.pull_request.merged",      label: "pull_request.merged",      desc: "true if the PR was merged" },
+      { group: "Pull Requests",  key: "payload.pull_request.user.login",  label: "pull_request.user.login",  desc: "PR author username" },
+      { group: "Pull Requests",  key: "payload.pull_request.head.ref",    label: "pull_request.head.ref",    desc: "Source branch name" },
+      { group: "Pull Requests",  key: "payload.pull_request.base.ref",    label: "pull_request.base.ref",    desc: "Target branch name" },
+      // Push
+      { group: "Push",           key: "payload.ref",                      label: "ref",                      desc: "Git ref (e.g. refs/heads/main)" },
+      { group: "Push",           key: "payload.before",                   label: "before",                   desc: "SHA before push" },
+      { group: "Push",           key: "payload.after",                    label: "after",                    desc: "SHA after push" },
+      { group: "Push",           key: "payload.commits.0.message",        label: "commits[0].message",       desc: "First commit message" },
+      { group: "Push",           key: "payload.commits.0.author.name",    label: "commits[0].author.name",   desc: "First commit author" },
+      { group: "Push",           key: "payload.pusher.name",              label: "pusher.name",              desc: "Who pushed" },
+    ],
+  },
+  {
+    service: "Stripe",
+    icon: "💳",
+    color: "#6366F1",
+    fields: [
+      { key: "payload.type",                      label: "type",                    desc: "Event type (e.g. payment_intent.succeeded)" },
+      { key: "payload.data.object.id",             label: "data.object.id",           desc: "Object ID" },
+      { key: "payload.data.object.amount",         label: "data.object.amount",       desc: "Amount in cents" },
+      { key: "payload.data.object.currency",       label: "data.object.currency",     desc: "Currency code (usd, eur…)" },
+      { key: "payload.data.object.status",         label: "data.object.status",       desc: "Object status" },
+      { key: "payload.data.object.customer",       label: "data.object.customer",     desc: "Customer ID" },
+      { key: "payload.data.object.description",    label: "data.object.description",  desc: "Description text" },
+      { key: "payload.data.object.metadata",       label: "data.object.metadata",     desc: "Custom metadata object" },
+    ],
+  },
+  {
+    service: "Notion",
+    icon: "📝",
+    color: "#F59E0B",
+    fields: [
+      { key: "payload.type",                     label: "type",                   desc: "Event type (page.created, etc.)" },
+      { key: "payload.data.id",                  label: "data.id",                desc: "Page or database ID" },
+      { key: "payload.data.url",                 label: "data.url",               desc: "Page URL" },
+      { key: "payload.data.properties",          label: "data.properties",        desc: "Page properties object" },
+      { key: "payload.data.parent.database_id",  label: "data.parent.database_id",desc: "Parent database ID" },
+      { key: "payload.data.created_by.id",       label: "data.created_by.id",     desc: "Creator user ID" },
+    ],
+  },
+];
 
 interface UpstreamOption {
   expr: string;
@@ -215,6 +301,22 @@ function buildUpstreamOptions(
   nodeTestPaths: Map<string, string[]>,
 ): UpstreamOption[] {
   return upstreamNodes.flatMap((n) => {
+    const isTrigger = n.data.nodeType?.startsWith("trigger_");
+
+    // For trigger nodes, use {{payload.*}} expressions (not steps[...])
+    if (isTrigger && n.data.nodeType === "trigger_webhook") {
+      const staticFields = OUTPUT_FIELDS.trigger_webhook ?? [];
+      return staticFields.map((f) => ({
+        expr: `{{${f.key}}}`,
+        label: f.label,
+        nodeLabel: "⚡ Webhook Trigger",
+      }));
+    }
+
+    // Other triggers (cron, manual) have no payload
+    if (isTrigger) return [];
+
+    // Regular action nodes
     const staticFields = OUTPUT_FIELDS[n.data.nodeType] ?? [];
     const staticOpts = staticFields.map((f) => ({
       expr: `{{steps['${n.id}'].${f.key}}}`,
@@ -238,6 +340,88 @@ function buildUpstreamOptions(
 }
 
 
+// ─── Webhook service templates component ──────────────────────────────────────
+
+function WebhookTemplates({ onInsert }: { onInsert: (expr: string) => void }) {
+  const [openService, setOpenService] = useState<string | null>(null);
+
+  return (
+    <div className="border-t border-iris-border-strong">
+      <div className="px-3 py-2 text-[9px] font-black uppercase tracking-widest text-iris-secondary bg-iris-base flex items-center gap-1.5">
+        <Webhook className="w-3 h-3" />
+        Service Payload Templates
+      </div>
+
+      {/* Service tabs */}
+      <div className="flex border-b border-iris-border-strong">
+        {WEBHOOK_PAYLOAD_TEMPLATES.map((svc) => (
+          <button
+            key={svc.service}
+            onClick={() => setOpenService(openService === svc.service ? null : svc.service)}
+            className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-[9px] font-bold uppercase tracking-widest transition-colors border-r border-iris-border-strong/40 last:border-r-0"
+            style={{
+              color: openService === svc.service ? svc.color : "var(--iris-text-muted)",
+              background: openService === svc.service ? `${svc.color}10` : "transparent",
+              borderBottom: openService === svc.service ? `2px solid ${svc.color}` : "2px solid transparent",
+            }}
+          >
+            <span>{svc.icon}</span>
+            {svc.service}
+          </button>
+        ))}
+      </div>
+
+      {/* Selected service fields */}
+      {WEBHOOK_PAYLOAD_TEMPLATES.filter((s) => s.service === openService).map((svc) => {
+        // Group fields by their group label
+        const groups: { name: string; fields: typeof svc.fields }[] = [];
+        let currentGroup = "";
+        for (const field of svc.fields) {
+          const g = field.group ?? "";
+          if (g !== currentGroup) {
+            groups.push({ name: g, fields: [] });
+            currentGroup = g;
+          }
+          groups[groups.length - 1].fields.push(field);
+        }
+        return (
+          <div key={svc.service}>
+            {groups.map((grp) => (
+              <div key={grp.name}>
+                {grp.name && (
+                  <div
+                    className="px-3 py-1 text-[8px] font-black uppercase tracking-widest border-b border-iris-border-strong/40"
+                    style={{ color: svc.color, background: `${svc.color}08` }}
+                  >
+                    {grp.name}
+                  </div>
+                )}
+                {grp.fields.map((field) => (
+                  <button
+                    key={field.key}
+                    onClick={() => onInsert(`{{${field.key}}}`)}
+                    className="w-full text-left px-3 py-2 hover:bg-iris-elevated transition-colors border-b border-iris-border-strong/40 last:border-0"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-1 h-1 rounded-full shrink-0" style={{ background: svc.color }} />
+                      <div className="text-[10px] font-mono text-white truncate">{field.label}</div>
+                    </div>
+                    <div className="text-[9px] text-iris-secondary truncate opacity-70 ml-2.5 mt-0.5">
+                      {field.desc}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── SmartField ───────────────────────────────────────────────────────────────
+
 interface SmartFieldProps {
   fieldName: string;
   value: string;
@@ -245,9 +429,10 @@ interface SmartFieldProps {
   multiline?: boolean;
   onChange: (v: string) => void;
   upstreamOptions: UpstreamOption[];
+  hasWebhookUpstream?: boolean;
 }
 
-function SmartField({ fieldName, value, placeholder, multiline, onChange, upstreamOptions }: SmartFieldProps) {
+function SmartField({ fieldName, value, placeholder, multiline, onChange, upstreamOptions, hasWebhookUpstream = false }: SmartFieldProps) {
   const [open, setOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
 
@@ -271,7 +456,7 @@ function SmartField({ fieldName, value, placeholder, multiline, onChange, upstre
     });
   }
 
-  const hasOptions = upstreamOptions.length > 0;
+  const hasOptions = upstreamOptions.length > 0 || hasWebhookUpstream;
   const inputCls = "w-full bg-iris-base border border-iris-border-strong px-3 py-2 text-white text-xs font-mono focus:outline-none focus:border-iris-accent transition-colors placeholder:text-iris-muted";
 
   return (
@@ -314,7 +499,7 @@ function SmartField({ fieldName, value, placeholder, multiline, onChange, upstre
         <>
           {/* Click-away backdrop */}
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-full mt-1 w-64 bg-iris-surface border border-iris-accent/40 z-50 shadow-2xl max-h-56 overflow-y-auto custom-scrollbar">
+          <div className="absolute right-0 top-full mt-1 w-full bg-iris-surface border border-iris-accent/40 z-50 shadow-2xl max-h-80 overflow-y-auto custom-scrollbar">
             <div className="px-3 py-2 text-[9px] font-black uppercase tracking-widest text-iris-secondary border-b border-iris-border-strong bg-iris-base">
               Insert from upstream node
             </div>
@@ -340,6 +525,11 @@ function SmartField({ fieldName, value, placeholder, multiline, onChange, upstre
                   ))}
               </div>
             ))}
+
+            {/* Webhook service templates — shown when a webhook trigger is upstream */}
+            {hasWebhookUpstream && (
+              <WebhookTemplates onInsert={insertAtCursor} />
+            )}
           </div>
         </>
       )}
@@ -360,6 +550,7 @@ export function ConfigPanel({ node, secrets, upstreamNodes, nodeTestPaths, onTes
   const isTrigger = node.data.nodeType?.startsWith("trigger_");
   const isLargeBody = (name: string) => name === "message" || name === "body" || name === "expr";
   const upstreamOptions = buildUpstreamOptions(upstreamNodes, nodeTestPaths);
+  const hasWebhookUpstream = upstreamNodes.some((n) => n.data.nodeType === "trigger_webhook");
 
   return (
     <aside className="w-72 bg-iris-surface border-l border-iris-border-strong flex flex-col h-full overflow-hidden shrink-0">
@@ -468,6 +659,7 @@ export function ConfigPanel({ node, secrets, upstreamNodes, nodeTestPaths, onTes
                 multiline={false}
                 onChange={(v) => handleChange(field.name, v)}
                 upstreamOptions={upstreamOptions}
+                hasWebhookUpstream={hasWebhookUpstream}
               />
             )}
 
@@ -479,6 +671,7 @@ export function ConfigPanel({ node, secrets, upstreamNodes, nodeTestPaths, onTes
                 multiline={isLargeBody(field.name)}
                 onChange={(v) => handleChange(field.name, v)}
                 upstreamOptions={upstreamOptions}
+                hasWebhookUpstream={hasWebhookUpstream}
               />
             )}
 
