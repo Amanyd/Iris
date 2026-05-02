@@ -23,6 +23,7 @@ type Bot struct {
 	iris     *irisClient.Client
 	store    *store.Store
 	stt      *stt.Client // nil when ElevenLabs key is not configured
+	hooksURL string     // base URL of iris-hooks, for displaying webhook URLs
 	log      *slog.Logger
 }
 
@@ -34,6 +35,7 @@ func New(
 	iris *irisClient.Client,
 	store *store.Store,
 	sttClient *stt.Client,
+	hooksURL string,
 	log *slog.Logger,
 ) (*Bot, error) {
 	api, err := tgbotapi.NewBotAPI(botToken)
@@ -42,7 +44,7 @@ func New(
 	}
 
 	log.Info("telegram bot authorized", "username", api.Self.UserName)
-	return &Bot{api: api, sessions: sessions, iris: iris, store: store, stt: sttClient, log: log}, nil
+	return &Bot{api: api, sessions: sessions, iris: iris, store: store, stt: sttClient, hooksURL: hooksURL, log: log}, nil
 }
 
 // Start begins polling for Telegram updates until ctx is cancelled.
@@ -203,6 +205,12 @@ func (b *Bot) dispatchCommand(ctx context.Context, chatID, userID int64, cmd, ar
 		b.cmdDelete(ctx, chatID, userID, strings.TrimSpace(args))
 	case "templates":
 		b.cmdTemplates(chatID)
+	case "toggle":
+		b.cmdToggle(ctx, chatID, userID, strings.TrimSpace(args), -1) // -1 = flip
+	case "enable":
+		b.cmdToggle(ctx, chatID, userID, strings.TrimSpace(args), 1) // 1 = force active
+	case "disable":
+		b.cmdToggle(ctx, chatID, userID, strings.TrimSpace(args), 0) // 0 = force inactive
 	case "cancel":
 		b.cmdCancel(chatID, userID)
 	default:
@@ -260,6 +268,9 @@ func (b *Bot) cmdHelp(chatID int64) {
 /logout — Unlink your account
 /new — Create a relay using AI
 /list — List your relays
+/toggle \<name or ID\> — Enable or disable a relay
+/enable \<name or ID\> — Enable a relay
+/disable \<name or ID\> — Disable a relay
 /trigger \<name or ID\> — Manually trigger a relay
 /status \<name\> — Show recent executions
 /delete \<name\> — Delete a relay
@@ -405,6 +416,80 @@ func (b *Bot) cmdDelete(ctx context.Context, chatID, userID int64, relayID strin
 	b.sessions.Set(userID, sess)
 
 	b.Send(chatID, fmt.Sprintf("⚠️ Are you sure you want to delete relay `%s`?\n\nReply *yes* to confirm or *no* to cancel.", relayID))
+}
+
+// cmdToggle enables/disables a relay.
+// mode: -1 = flip current state, 1 = force enable, 0 = force disable.
+func (b *Bot) cmdToggle(ctx context.Context, chatID, userID int64, query string, mode int) {
+	if query == "" {
+		b.Send(chatID, "Usage: /toggle <name or ID>\nExample: /toggle my-relay\n\nUse /enable or /disable to force a specific state.")
+		return
+	}
+
+	link, ok := b.getLink(ctx, chatID, userID)
+	if !ok {
+		return
+	}
+
+	relays, err := b.iris.ListRelays(ctx, link.Token)
+	if err != nil {
+		b.log.Error("toggle: list relays", "err", err)
+		b.Send(chatID, "❌ Failed to fetch your relays. Please try again.")
+		return
+	}
+
+	// Match by exact ID first, then by name prefix (case-insensitive)
+	var target *irisClient.Relay
+	queryLower := strings.ToLower(query)
+	for i := range relays {
+		if relays[i].ID == query {
+			target = &relays[i]
+			break
+		}
+		if strings.HasPrefix(strings.ToLower(relays[i].Name), queryLower) {
+			target = &relays[i]
+		}
+	}
+
+	if target == nil {
+		b.Send(chatID, fmt.Sprintf("❌ No relay found matching `%s`. Use /list to see your relays.", query))
+		return
+	}
+
+	// Determine new state
+	var newActive bool
+	switch mode {
+	case 1:
+		newActive = true
+	case 0:
+		newActive = false
+	default:
+		newActive = !target.IsActive // flip
+	}
+
+	if newActive == target.IsActive {
+		state := "active ✅"
+		if !newActive {
+			state = "inactive ⏸"
+		}
+		b.Send(chatID, fmt.Sprintf("ℹ️ *%s* is already %s — no change made.", target.Name, state))
+		return
+	}
+
+	updated, err := b.iris.SetRelayActive(ctx, link.Token, target.ID, newActive)
+	if err != nil {
+		b.log.Error("toggle relay", "relay_id", target.ID, "err", err)
+		b.Send(chatID, "❌ Failed to update relay. Please try again.")
+		return
+	}
+
+	emoji := "✅"
+	stateWord := "enabled"
+	if !updated.IsActive {
+		emoji = "⏸"
+		stateWord = "disabled"
+	}
+	b.Send(chatID, fmt.Sprintf("%s *%s* has been *%s*.", emoji, updated.Name, stateWord))
 }
 
 func (b *Bot) cmdTemplates(chatID int64) {
@@ -566,8 +651,14 @@ func (b *Bot) handleConfirm(ctx context.Context, chatID, userID int64, text stri
 		b.sessions.Set(userID, sess)
 		_ = b.store.ClearAISession(ctx, userID)
 
-		b.Send(chatID, fmt.Sprintf("✅ *Relay created!*\n\nName: *%s*\nID: `%s`\n\nUse /trigger %s to run it manually.",
-			relay.Name, relay.ID, relay.ID))
+		msg := fmt.Sprintf("✅ *Relay created!*\n\nName: *%s*\nID: `%s`", relay.Name, relay.ID)
+		if relay.TriggerType == "webhook" {
+			webhookURL := fmt.Sprintf("%s/hooks/%s", b.hooksURL, relay.ID)
+			msg += fmt.Sprintf("\n\n🔗 *Webhook URL:*\n`%s`\n\nSend a POST request to this URL to trigger the relay.", webhookURL)
+		} else {
+			msg += fmt.Sprintf("\n\nUse /trigger %s to run it manually.", relay.ID)
+		}
+		b.Send(chatID, msg)
 
 	case lower == "edit" || lower == "change" || lower == "modify":
 		sess.State = StateEditing

@@ -83,7 +83,7 @@ func main() {
 	}
 
 	// ── Bot ───────────────────────────────────────────────────────────────────
-	b, err := bot.New(botToken, sessions, iris, db, sttClient, log)
+	b, err := bot.New(botToken, sessions, iris, db, sttClient, cfg.IrisHooksURL, log)
 	if err != nil {
 		log.Error("bot init failed", "err", err)
 		os.Exit(1)

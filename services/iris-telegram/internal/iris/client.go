@@ -196,6 +196,22 @@ func (c *Client) GenerateRelay(ctx context.Context, token, message string, conve
 	return &result, json.NewDecoder(resp.Body).Decode(&result)
 }
 
+// SetRelayActive sets the is_active state of a relay without modifying any other fields.
+func (c *Client) SetRelayActive(ctx context.Context, token, relayID string, active bool) (*Relay, error) {
+	body := map[string]any{"is_active": active}
+	resp, err := c.do(ctx, http.MethodPut, "/api/v1/relays/"+relayID, token, body)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("iris: set relay active: status %d: %s", resp.StatusCode, b)
+	}
+	var relay Relay
+	return &relay, json.NewDecoder(resp.Body).Decode(&relay)
+}
+
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
 func (c *Client) do(ctx context.Context, method, path, token string, body any) (*http.Response, error) {

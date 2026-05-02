@@ -12,14 +12,15 @@ import (
 // Config holds all environment-driven configuration for iris-telegram.
 type Config struct {
 	TelegramBotToken string
-	LLMProvider      string        // "openai"
+	LLMProvider      string
 	LLMAPIKey        string
 	LLMModel         string
-	IrisCoreURL      string        // e.g. "http://localhost:3000"
-	DatabaseURL      string        // for telegram_links table
-	NATSURL          string        // for execution notifications
-	SessionTTL       time.Duration // default 24h
-	ElevenLabsAPIKey string        // optional: enables voice-note STT via ElevenLabs Scribe
+	IrisCoreURL      string // e.g. "http://localhost:3000"
+	IrisHooksURL     string // e.g. "http://localhost:8080" — used to display webhook URLs
+	DatabaseURL      string // for telegram_links table
+	NATSURL          string // for execution notifications
+	SessionTTL       time.Duration
+	ElevenLabsAPIKey string // optional: enables voice-note STT via ElevenLabs Scribe
 }
 
 // Load reads config from environment variables.
@@ -33,6 +34,7 @@ func Load() (*Config, error) {
 		LLMAPIKey:        os.Getenv("LLM_API_KEY"),
 		LLMModel:         getEnv("LLM_MODEL", "gpt-4o-mini"),
 		IrisCoreURL:      getEnv("IRIS_CORE_URL", "http://localhost:3000"),
+		IrisHooksURL:     getEnv("IRIS_HOOKS_URL", "http://localhost:8080"),
 		DatabaseURL:      os.Getenv("DATABASE_URL"),
 		NATSURL:          getEnv("NATS_URL", "nats://localhost:4222"),
 		SessionTTL:       getEnvDuration("SESSION_TTL", 24*time.Hour),
