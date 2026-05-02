@@ -37,6 +37,9 @@ func NewRouter(h *Handler, cfg *config.Config) *chi.Mux {
 		r.Post("/auth/register", h.Register)
 		r.Post("/auth/login", h.Login)
 
+		// Internal service-to-service (no user JWT, validated by SERVICE_SECRET header)
+		r.Get("/internal/settings/{key}", h.GetSettingValue)
+
 		// Protected endpoints
 		r.Group(func(r chi.Router) {
 			r.Use(JWTAuth(cfg.JWTSecret))
@@ -66,6 +69,11 @@ func NewRouter(h *Handler, cfg *config.Config) *chi.Mux {
 			// AI relay generation + STT transcription
 			r.Post("/ai/relay", h.GenerateRelay)
 			r.Post("/ai/transcribe", h.TranscribeAudio)
+
+			// System settings (bot token, etc.)
+			r.Get("/settings", h.GetSettings)
+			r.Put("/settings", h.PutSettings)
+			r.Get("/settings/{key}", h.GetSettingValue)
 
 		})
 	})

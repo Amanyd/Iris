@@ -5,7 +5,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/eulerbutcooler/iris/services/iris-telegram/internal/ai"
 	"github.com/eulerbutcooler/iris/services/iris-telegram/internal/iris"
 )
 
@@ -24,10 +23,10 @@ const (
 // Session holds all per-user state for one Telegram conversation.
 type Session struct {
 	State        SessionState
-	Token        string                    // Iris JWT, set after /login
-	DraftRelay   *iris.CreateRelayRequest  // relay being built
-	DraftRelayID string                    // ID of the relay to delete (StateAwaitDelete)
-	Conversation []ai.Message              // full LLM conversation history
+	Token        string                   // Iris JWT, set after /login
+	DraftRelay   *iris.CreateRelayRequest // relay being built
+	DraftRelayID string                   // ID of the relay to delete (StateAwaitDelete)
+	Conversation []iris.AIMessage         // full LLM conversation history
 	LastActivity time.Time
 }
 

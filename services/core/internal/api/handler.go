@@ -16,6 +16,7 @@ type Handler struct {
 	relays    RelayStore
 	secrets   SecretStore
 	users     UserStore
+	settings  SettingsStore
 	publisher *queue.Publisher
 	llm       ai.LLMClient
 	enc       *encryptor.Encryptor
@@ -28,6 +29,7 @@ func NewHandler(
 	relays RelayStore,
 	secrets SecretStore,
 	users UserStore,
+	settings SettingsStore,
 	publisher *queue.Publisher,
 	llm ai.LLMClient,
 	enc *encryptor.Encryptor,
@@ -38,6 +40,7 @@ func NewHandler(
 		relays:    relays,
 		secrets:   secrets,
 		users:     users,
+		settings:  settings,
 		publisher: publisher,
 		llm:       llm,
 		enc:       enc,

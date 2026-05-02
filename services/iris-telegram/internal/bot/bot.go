@@ -2,6 +2,8 @@ package bot
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -9,7 +11,6 @@ import (
 	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/eulerbutcooler/iris/services/iris-telegram/internal/ai"
 	irisClient "github.com/eulerbutcooler/iris/services/iris-telegram/internal/iris"
 	"github.com/eulerbutcooler/iris/services/iris-telegram/internal/stt"
 	"github.com/eulerbutcooler/iris/services/iris-telegram/internal/store"
@@ -19,7 +20,6 @@ import (
 type Bot struct {
 	api      *tgbotapi.BotAPI
 	sessions *SessionManager
-	ai       *ai.Client
 	iris     *irisClient.Client
 	store    *store.Store
 	stt      *stt.Client // nil when ElevenLabs key is not configured
@@ -31,7 +31,6 @@ type Bot struct {
 func New(
 	botToken string,
 	sessions *SessionManager,
-	aiClient *ai.Client,
 	iris *irisClient.Client,
 	store *store.Store,
 	sttClient *stt.Client,
@@ -43,7 +42,7 @@ func New(
 	}
 
 	log.Info("telegram bot authorized", "username", api.Self.UserName)
-	return &Bot{api: api, sessions: sessions, ai: aiClient, iris: iris, store: store, stt: sttClient, log: log}, nil
+	return &Bot{api: api, sessions: sessions, iris: iris, store: store, stt: sttClient, log: log}, nil
 }
 
 // Start begins polling for Telegram updates until ctx is cancelled.
@@ -189,7 +188,7 @@ func (b *Bot) dispatchCommand(ctx context.Context, chatID, userID int64, cmd, ar
 	case "help":
 		b.cmdHelp(chatID)
 	case "login":
-		b.cmdLogin(ctx, chatID, userID)
+		b.cmdLogin(ctx, chatID, userID, args)
 	case "logout":
 		b.cmdLogout(ctx, chatID, userID)
 	case "new":
@@ -225,7 +224,16 @@ func (b *Bot) dispatchMessage(ctx context.Context, chatID, userID int64, text st
 	case StateAwaitDelete:
 		b.handleDeleteConfirm(ctx, chatID, userID, text, sess)
 	default:
-		b.Send(chatID, "Use /new to create a relay, or /help to see all commands.")
+		// Idle: if the user is linked, treat any plain message as a relay creation request.
+		// This makes voice notes work naturally — no need to type /new first.
+		if _, err := b.store.GetLinkByTelegramID(ctx, userID); err == nil {
+			sess.State = StateDescribing
+			sess.Conversation = nil
+			b.sessions.Set(userID, sess)
+			b.handleDescribe(ctx, chatID, userID, text, sess)
+		} else {
+			b.Send(chatID, "👋 Link your Iris account first with /login, then describe a relay or send a voice note.")
+		}
 	}
 }
 
@@ -260,13 +268,20 @@ func (b *Bot) cmdHelp(chatID int64) {
 /help — Show this message`)
 }
 
-func (b *Bot) cmdLogin(ctx context.Context, chatID, userID int64) {
+func (b *Bot) cmdLogin(ctx context.Context, chatID, userID int64, args string) {
+	// Support both "/login" (prompts for token) and "/login <token>" (inline)
+	token := strings.TrimSpace(args)
+	if token != "" {
+		sess := b.sessions.Get(userID)
+		b.handleLogin(ctx, chatID, userID, token, sess)
+		return
+	}
 	sess := b.sessions.Get(userID)
 	sess.State = StateAwaitLogin
 	b.sessions.Set(userID, sess)
 	b.Send(chatID, `To link your account, paste your *Iris JWT token* below.
 
-You can get it by logging in at the Iris web dashboard and copying it from settings.`)
+You can copy it from the *Connections* page in the Iris web dashboard.`)
 }
 
 func (b *Bot) cmdLogout(ctx context.Context, chatID, userID int64) {
@@ -431,8 +446,14 @@ func (b *Bot) handleLogin(ctx context.Context, chatID, userID int64, token strin
 		return
 	}
 
-	// Get user info from token (we just store the raw token; iris-core validates it per-request)
-	if err := b.store.LinkUser(ctx, userID, "unknown", token, ""); err != nil {
+	// Extract the user UUID from the JWT sub claim (middle segment, base64 JSON)
+	userUUID := extractJWTSub(token)
+	if userUUID == "" {
+		b.Send(chatID, "❌ Couldn't parse that token. Please copy it fresh from the Iris dashboard.")
+		return
+	}
+
+	if err := b.store.LinkUser(ctx, userID, userUUID, token, ""); err != nil {
 		b.log.Error("link user", "err", err)
 		b.Send(chatID, "❌ Failed to save your account link. Please try again.")
 		return
@@ -445,32 +466,53 @@ func (b *Bot) handleLogin(ctx context.Context, chatID, userID int64, token strin
 	b.Send(chatID, "✅ *Account linked!*\n\nYou're all set. Use /new to create a relay or /list to see your existing ones.")
 }
 
-func (b *Bot) handleDescribe(ctx context.Context, chatID, userID int64, text string, sess *Session) {
-	// Build conversation: system + history + new user message
-	messages := []ai.Message{{Role: "system", Content: ai.BuildSystemPrompt()}}
-	messages = append(messages, sess.Conversation...)
-	messages = append(messages, ai.Message{Role: "user", Content: text})
-
-	b.Send(chatID, "🤔 _Thinking..._")
-
-	raw, err := b.ai.Chat(ctx, messages)
+// extractJWTSub pulls the "sub" claim from a JWT without verifying the signature.
+// The token is trusted because ValidateToken already confirmed it with iris-core.
+func extractJWTSub(token string) string {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return ""
+	}
+	// JWT payload is base64url-encoded (no padding)
+	padded := parts[1]
+	switch len(padded) % 4 {
+	case 2:
+		padded += "=="
+	case 3:
+		padded += "="
+	}
+	data, err := base64.URLEncoding.DecodeString(padded)
 	if err != nil {
-		b.log.Error("ai chat", "err", err)
-		b.Send(chatID, "❌ AI request failed. Please try again.")
+		return ""
+	}
+	var claims struct {
+		Sub string `json:"sub"`
+	}
+	if err := json.Unmarshal(data, &claims); err != nil {
+		return ""
+	}
+	return claims.Sub
+}
+
+func (b *Bot) handleDescribe(ctx context.Context, chatID, userID int64, text string, sess *Session) {
+	link, ok := b.getLink(ctx, chatID, userID)
+	if !ok {
 		return
 	}
 
-	resp, err := ai.ParseResponse(raw)
+	b.Send(chatID, "🤔 _Thinking..._")
+
+	resp, err := b.iris.GenerateRelay(ctx, link.Token, text, sess.Conversation, "")
 	if err != nil {
-		b.log.Warn("parse ai response", "raw", raw[:min(len(raw), 200)], "err", err)
-		b.Send(chatID, "❌ Couldn't understand the AI response. Please rephrase your request.")
+		b.log.Error("ai generate relay via core", "err", err)
+		b.Send(chatID, "❌ AI request failed. Please try again.")
 		return
 	}
 
 	// Update conversation history
 	sess.Conversation = append(sess.Conversation,
-		ai.Message{Role: "user", Content: text},
-		ai.Message{Role: "assistant", Content: raw},
+		irisClient.AIMessage{Role: "user", Content: text},
+		irisClient.AIMessage{Role: "assistant", Content: resp.Message},
 	)
 
 	if resp.Message != "" {

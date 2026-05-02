@@ -31,10 +31,16 @@ type Client struct {
 }
 
 // NewClient creates an LLM client for the given provider.
+// Supported providers: "openai", "gemini"
 func NewClient(provider, apiKey, model string) (*Client, error) {
 	switch provider {
 	case "openai":
 		return &Client{openai: openai.NewClient(apiKey), model: model}, nil
+	case "gemini":
+		// Gemini exposes an OpenAI-compatible REST API — reuse the same client.
+		cfg := openai.DefaultConfig(apiKey)
+		cfg.BaseURL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+		return &Client{openai: openai.NewClientWithConfig(cfg), model: model}, nil
 	default:
 		return nil, fmt.Errorf("ai: unsupported provider %q", provider)
 	}

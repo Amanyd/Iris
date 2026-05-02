@@ -77,9 +77,10 @@ func main() {
 	userStore := store.NewUserStore(pool)
 	secretStore := store.NewSecretStore(pool)
 	relayStore := store.NewRelayStore(pool)
+	settingsStore := store.NewSettingsStore(pool)
 
 	// ── Handler + Router ──────────────────────────────────────────────────────
-	handler := api.NewHandler(relayStore, secretStore, userStore, publisher, llmClient, enc, cfg, log)
+	handler := api.NewHandler(relayStore, secretStore, userStore, settingsStore, publisher, llmClient, enc, cfg, log)
 	router := api.NewRouter(handler, cfg)
 
 	// ── HTTP Server ───────────────────────────────────────────────────────────

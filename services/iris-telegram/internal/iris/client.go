@@ -53,6 +53,21 @@ type Execution struct {
 	FinishedAt *string `json:"finished_at"`
 }
 
+// AIMessage is a single turn in the LLM conversation.
+type AIMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// AIRelayResponse is the decoded response from POST /api/v1/ai/relay.
+type AIRelayResponse struct {
+	Ready     bool                 `json:"ready"`
+	Questions []string             `json:"questions,omitempty"`
+	Message   string               `json:"message,omitempty"`
+	Relay     *CreateRelayRequest  `json:"relay,omitempty"`
+	RelayID   string               `json:"relay_id,omitempty"`
+}
+
 // Client is an HTTP client for the iris-core REST API.
 type Client struct {
 	baseURL    string
@@ -155,6 +170,30 @@ func (c *Client) DeleteRelay(ctx context.Context, token, relayID string) error {
 		return fmt.Errorf("iris: delete relay: status %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// GenerateRelay calls POST /api/v1/ai/relay on iris-core.
+// message is the latest user text; conversation is the prior history.
+// relayID is optional — set it when the user wants to edit an existing relay.
+func (c *Client) GenerateRelay(ctx context.Context, token, message string, conversation []AIMessage, relayID string) (*AIRelayResponse, error) {
+	body := map[string]any{
+		"message":      message,
+		"conversation": conversation,
+	}
+	if relayID != "" {
+		body["relay_id"] = relayID
+	}
+	resp, err := c.do(ctx, http.MethodPost, "/api/v1/ai/relay", token, body)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("iris: generate relay: status %d: %s", resp.StatusCode, b)
+	}
+	var result AIRelayResponse
+	return &result, json.NewDecoder(resp.Body).Decode(&result)
 }
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────

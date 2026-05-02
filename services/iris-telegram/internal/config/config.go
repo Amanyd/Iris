@@ -1,8 +1,11 @@
 package config
 
 import (
+	"bufio"
 	"errors"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -20,7 +23,10 @@ type Config struct {
 }
 
 // Load reads config from environment variables.
+// It also attempts to auto-load the root .env file so the bot can be run
+// from any working directory without manually sourcing env vars.
 func Load() (*Config, error) {
+	loadDotEnv()
 	cfg := &Config{
 		TelegramBotToken: os.Getenv("TELEGRAM_BOT_TOKEN"),
 		LLMProvider:      getEnv("LLM_PROVIDER", "openai"),
@@ -30,16 +36,14 @@ func Load() (*Config, error) {
 		DatabaseURL:      os.Getenv("DATABASE_URL"),
 		NATSURL:          getEnv("NATS_URL", "nats://localhost:4222"),
 		SessionTTL:       getEnvDuration("SESSION_TTL", 24*time.Hour),
-		ElevenLabsAPIKey: os.Getenv("ELEVENLABS_API_KEY"), // optional
+		ElevenLabsAPIKey: os.Getenv("ELEVENLABS_API_KEY"),
 	}
 	return cfg, cfg.validate()
 }
 
 func (c *Config) validate() error {
 	var missing []string
-	if c.TelegramBotToken == "" {
-		missing = append(missing, "TELEGRAM_BOT_TOKEN")
-	}
+	// TELEGRAM_BOT_TOKEN is optional here — main.go fetches it from iris-core if absent
 	if c.DatabaseURL == "" {
 		missing = append(missing, "DATABASE_URL")
 	}
@@ -74,4 +78,41 @@ func join(ss []string) string {
 		result += s
 	}
 	return result
+}
+
+// loadDotEnv walks up from the current working directory to find the
+// repo-root .env file and loads any keys not already set in the environment.
+// Explicitly-set env vars always win over .env values.
+func loadDotEnv() {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return
+	}
+	for dir := cwd; ; dir = filepath.Dir(dir) {
+		path := filepath.Join(dir, ".env")
+		if f, err := os.Open(path); err == nil {
+			scanner := bufio.NewScanner(f)
+			for scanner.Scan() {
+				line := strings.TrimSpace(scanner.Text())
+				if line == "" || strings.HasPrefix(line, "#") {
+					continue
+				}
+				parts := strings.SplitN(line, "=", 2)
+				if len(parts) != 2 {
+					continue
+				}
+				key := strings.TrimSpace(parts[0])
+				val := strings.TrimSpace(parts[1])
+				if os.Getenv(key) == "" {
+					os.Setenv(key, val)
+				}
+			}
+			f.Close()
+			return
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break // reached filesystem root
+		}
+	}
 }
