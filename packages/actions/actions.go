@@ -81,9 +81,15 @@ func init() {
 
 	register(ActionConfig{
 		Type:        "condition",
-		Description: "Evaluates a boolean expression. Outbound edges should declare matching conditions.",
+		Description: "Evaluates a boolean expression against step outputs. Use this to branch the DAG based on data values.",
 		Fields: []FieldSpec{
-			{Name: "expr", Type: FieldTypeString, Required: true, Description: `Boolean expression, e.g. "steps['fetch'].output.status == 200"`},
+			{Name: "expr", Type: FieldTypeString, Required: true, Description: `Boolean expression. Supported operators: == != > >= < <= contains exists. ` +
+				`Values can be literals or step references (steps['node_id'].output.field). ` +
+				`Examples: "steps['fetch'].output.bitcoin.usd >= 70000", ` +
+				`"steps['get'].output.status == 200", ` +
+				`"steps['fetch'].output.body contains error", ` +
+				`"exists steps['fetch'].output.data"`,
+			},
 		},
 	})
 }

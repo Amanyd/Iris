@@ -171,3 +171,8 @@ func (g *Graph) Children(nodeID string) []string {
 func (g *Graph) OutEdges(nodeID string) []Edge {
 	return g.outEdges[nodeID]
 }
+
+// InEdges returns all incoming edges to nodeID (includes Condition).
+func (g *Graph) InEdges(nodeID string) []Edge {
+	return g.inEdges[nodeID]
+}

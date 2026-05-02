@@ -4,7 +4,18 @@ import { GitBranch } from "lucide-react";
 import type { IrisNodeData } from "@/lib/workflow/converters";
 
 function ConditionNodeComponent({ data, selected }: { data: IrisNodeData; selected?: boolean }) {
-  const expr = (data.config?.expr as string) || "…";
+  const left = (data.config?.left_operand as string) || "";
+  const op = (data.config?.operator as string) || "==";
+  const right = (data.config?.right_operand as string) || "";
+
+  // Build a short display string from the 3 parts
+  const displayLeft = left
+    ? left.replace(/^steps\['([^']+)'\]\.output\./, "$1 › ") // "node › field"
+    : "…";
+  const displayExpr =
+    op === "exists"
+      ? `exists ${displayLeft}`
+      : `${displayLeft} ${op} ${right || "…"}`;
 
   return (
     <div
@@ -22,10 +33,23 @@ function ConditionNodeComponent({ data, selected }: { data: IrisNodeData; select
       </div>
 
       {/* Body */}
-      <div className="px-3 py-3">
-        <div className="text-[10px] text-iris-secondary mb-1 uppercase tracking-widest font-bold">Expression</div>
-        <div className="text-xs text-white font-mono truncate max-w-[180px]" title={expr}>
-          {expr}
+      <div className="px-3 py-3 space-y-1">
+        {/* Left operand */}
+        <div className="text-[9px] text-iris-secondary uppercase tracking-widest font-bold">Value</div>
+        <div className="text-[10px] text-iris-accent font-mono truncate" title={left}>
+          {displayLeft}
+        </div>
+
+        {/* Operator badge */}
+        <div className="flex items-center gap-1.5 py-0.5">
+          <span className="text-[10px] font-black font-mono bg-iris-error/20 text-iris-error px-2 py-0.5 border border-iris-error/30">
+            {op}
+          </span>
+          {op !== "exists" && (
+            <span className="text-[10px] font-mono text-white truncate max-w-[100px]" title={right}>
+              {right || <span className="text-iris-muted italic">any</span>}
+            </span>
+          )}
         </div>
       </div>
 

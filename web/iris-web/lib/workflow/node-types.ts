@@ -7,7 +7,7 @@ export type NodeCategory = "trigger" | "action" | "condition";
 export interface ConfigField {
   name: string;
   label: string;
-  type: "string" | "int" | "bool" | "map" | "secret_ref" | "select";
+  type: "string" | "int" | "bool" | "map" | "secret_ref" | "select" | "condition_left";
   required: boolean;
   description: string;
   options?: string[]; // for "select" type
@@ -210,15 +210,31 @@ export const NODE_TYPES: NodeTypeDef[] = [
     category: "condition",
     description: "Evaluates a boolean expression to branch the flow",
     icon: "GitBranch",
-    defaultConfig: { expr: "" },
+    defaultConfig: { left_operand: "", operator: ">=", right_operand: "", expr: "" },
     configFields: [
       {
-        name: "expr",
-        label: "Expression",
-        type: "string",
+        name: "left_operand",
+        label: "Value to Check",
+        type: "condition_left",
         required: true,
-        description: "Boolean expression (e.g. steps['fetch'].output.status == 200)",
-        placeholder: "steps['http-1'].output.status == 200",
+        description: "Reference a value from a previous step, e.g. steps['fetch'].output.bitcoin.usd",
+        placeholder: "steps['fetch'].output.bitcoin.usd",
+      },
+      {
+        name: "operator",
+        label: "Operator",
+        type: "select",
+        required: true,
+        description: "",
+        options: [">=", "<=", ">", "<", "==", "!=", "contains", "exists"],
+      },
+      {
+        name: "right_operand",
+        label: "Compare Against",
+        type: "string",
+        required: false,
+        description: "The value to compare against (number or text). Leave blank when using \"exists\".",
+        placeholder: "70000",
       },
     ],
   },

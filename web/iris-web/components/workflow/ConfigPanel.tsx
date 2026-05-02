@@ -394,7 +394,11 @@ export function ConfigPanel({ node, secrets, upstreamNodes, nodeTestPaths, onTes
           </div>
         )}
 
-        {typeDef?.configFields.map((field) => (
+        {typeDef?.configFields.map((field) => {
+          // Hide the right_operand field when operator is "exists"
+          if (field.name === "right_operand" && config["operator"] === "exists") return null;
+
+          return (
           <div key={field.name} className="space-y-1.5">
             <div className="flex items-center justify-between">
               <label className="text-[10px] font-black uppercase tracking-widest text-iris-secondary">
@@ -455,6 +459,18 @@ export function ConfigPanel({ node, secrets, upstreamNodes, nodeTestPaths, onTes
               </label>
             )}
 
+            {/* condition_left: SmartField that only suggests step references (no raw typing blocked) */}
+            {field.type === "condition_left" && (
+              <SmartField
+                fieldName={field.name}
+                value={(config[field.name] as string) ?? ""}
+                placeholder={field.placeholder}
+                multiline={false}
+                onChange={(v) => handleChange(field.name, v)}
+                upstreamOptions={upstreamOptions}
+              />
+            )}
+
             {field.type === "string" && (
               <SmartField
                 fieldName={field.name}
@@ -476,9 +492,12 @@ export function ConfigPanel({ node, secrets, upstreamNodes, nodeTestPaths, onTes
               />
             )}
 
-            <div className="text-[10px] text-iris-muted leading-relaxed">{field.description}</div>
+            {field.description && (
+              <div className="text-[10px] text-iris-muted leading-relaxed">{field.description}</div>
+            )}
           </div>
-        ))}
+        );
+        })}
       </div>
 
       {/* Delete */}

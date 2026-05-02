@@ -1,6 +1,16 @@
-.PHONY: db-migrate-up db-migrate-down db-migrate-create db-reset db-shell \
-        dev-core dev-hooks dev-worker dev-telegram dev-all \
+include .env
+export
+
+.PHONY: infra-up infra-down db-migrate-up db-migrate-down db-migrate-create db-reset db-shell \
+        dev-core dev-hooks dev-worker dev-telegram dev-all dev-backend \
         build lint
+
+# ── Infrastructure ─────────────────────────────────────────────────────────
+infra-up:
+	docker compose up -d
+
+infra-down:
+	docker compose down
 
 # ── Database ───────────────────────────────────────────────────────────────
 db-migrate-up:
@@ -31,6 +41,9 @@ dev-worker:
 
 dev-telegram:
 	go run ./services/iris-telegram/cmd/bot
+
+dev-backend:
+	$(MAKE) -j3 dev-core dev-hooks dev-worker
 
 dev-all:
 	$(MAKE) -j4 dev-core dev-hooks dev-worker dev-telegram

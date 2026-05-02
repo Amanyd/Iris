@@ -71,6 +71,14 @@ export function relayToFlow(relay: RelayWithActions): { nodes: Node<IrisNodeData
 
     const nodeType = action.action_type === "condition" ? "conditionNode" : "actionNode";
 
+    // For condition nodes loaded from the backend, parse expr → builder parts
+    if (action.action_type === "condition" && typeof cleanConfig.expr === "string") {
+      const parts = parseExprToParts(cleanConfig.expr as string);
+      cleanConfig.left_operand = parts.left;
+      cleanConfig.operator = parts.op;
+      cleanConfig.right_operand = parts.right;
+    }
+
     return {
       id: action.node_id,
       type: nodeType,
@@ -145,17 +153,29 @@ export function flowToRelay(
   // Action nodes = all non-trigger nodes
   const actionNodes = nodes.filter((n) => !n.data.nodeType?.startsWith("trigger_"));
 
-  const actions: CreateRelayActionInput[] = actionNodes.map((node, i) => ({
-    node_id: node.id,
-    action_type: node.data.nodeType,
-    order_index: i,
-    config: {
-      ...node.data.config,
-      // Persist canvas position so we can restore it on next load
-      [POS_KEY_X]: Math.round(node.position.x),
-      [POS_KEY_Y]: Math.round(node.position.y),
-    },
-  }));
+  const actions: CreateRelayActionInput[] = actionNodes.map((node, i) => {
+    const rawConfig = { ...node.data.config };
+
+    // For condition nodes, assemble the expr string from the 3-part builder fields
+    if (node.data.nodeType === "condition") {
+      const left = (rawConfig.left_operand as string) ?? "";
+      const op = (rawConfig.operator as string) ?? "==";
+      const right = (rawConfig.right_operand as string) ?? "";
+      rawConfig.expr = op === "exists" ? `exists ${left}` : `${left} ${op} ${right}`;
+    }
+
+    return {
+      node_id: node.id,
+      action_type: node.data.nodeType,
+      order_index: i,
+      config: {
+        ...rawConfig,
+        // Persist canvas position so we can restore it on next load
+        [POS_KEY_X]: Math.round(node.position.x),
+        [POS_KEY_Y]: Math.round(node.position.y),
+      },
+    };
+  });
 
   // Strip edges FROM the trigger node entirely.
   // The DAG validator only knows about action nodes — the trigger is not an action.
@@ -204,4 +224,37 @@ export function createFlowNode(
     position,
     data: { nodeType, label, config: { ...defaultConfig } },
   };
+}
+
+// ─── Condition expr parser ────────────────────────────────────────────────────
+
+// Operators in specificity order (longest first to avoid prefix ambiguity)
+const OPS = [">=", "<=", "!=", ">", "<", "==", "contains"] as const;
+
+/**
+ * Parses a condition expr string back into the 3-part builder fields.
+ * e.g. "steps['x'].output.price >= 70000" → { left: "steps['x'].output.price", op: ">=", right: "70000" }
+ */
+export function parseExprToParts(expr: string): { left: string; op: string; right: string } {
+  expr = expr.trim();
+
+  // "exists <ref>"
+  if (expr.toLowerCase().startsWith("exists ")) {
+    return { left: expr.slice(7).trim(), op: "exists", right: "" };
+  }
+
+  for (const op of OPS) {
+    const sep = op === "contains" ? ` ${op} ` : ` ${op} `;
+    const idx = expr.indexOf(sep);
+    if (idx !== -1) {
+      return {
+        left: expr.slice(0, idx).trim(),
+        op,
+        right: expr.slice(idx + sep.length).trim(),
+      };
+    }
+  }
+
+  // Fallback: treat the whole expression as the left operand
+  return { left: expr, op: "==", right: "" };
 }

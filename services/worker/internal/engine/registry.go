@@ -4,49 +4,63 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 )
 
-// StepOutput holds the result of a completed DAG node execution.
+// StepOutput represents the result of a single node's execution.
 type StepOutput struct {
-	Output map[string]any
-	Error  string
+	Output  map[string]any
+	Error   string
+	Skipped bool // true if the node was skipped due to condition mismatch
 }
 
-// ActionExecutor is the interface every integration plugin must implement.
+// ActionExecutor defines the interface all plugin executors must implement.
 type ActionExecutor interface {
-	// Execute runs the action and returns a JSON-encoded result.
-	// config: the action's resolved config (secrets already substituted)
-	// payload: the raw trigger payload bytes
-	// prevOutputs: outputs of all nodes that completed before this one
-	Execute(ctx context.Context, config map[string]any, payload []byte, prevOutputs map[string]StepOutput) (json.RawMessage, error)
+	// Execute runs the action.
+	// config: merged & secret-resolved configuration for this node.
+	// payload: original raw event payload (e.g. from webhook/schedule).
+	// prevOutputs: readonly map of upstream node results.
+	Execute(
+		ctx context.Context,
+		config map[string]any,
+		payload []byte,
+		prevOutputs map[string]StepOutput,
+	) (json.RawMessage, error)
 }
 
-// Registry maps action type strings to their executor implementations.
+// Registry holds the available action executors.
 type Registry struct {
 	executors map[string]ActionExecutor
+	mu        sync.RWMutex
 }
 
-// NewRegistry creates an empty Registry.
+// NewRegistry creates an empty registry.
 func NewRegistry() *Registry {
-	return &Registry{executors: make(map[string]ActionExecutor)}
+	return &Registry{
+		executors: make(map[string]ActionExecutor),
+	}
 }
 
-// Register adds an executor for the given action type.
+// Register adds an executor for a given action type.
 func (r *Registry) Register(actionType string, exec ActionExecutor) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.executors[actionType] = exec
 }
 
-// Get returns the executor for actionType, or false if unregistered.
-func (r *Registry) Get(actionType string) (ActionExecutor, bool) {
-	exec, ok := r.executors[actionType]
-	return exec, ok
+// MustGet returns the executor for the action type, or an error if not found.
+func (r *Registry) MustGet(actionType string) (ActionExecutor, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if ex, ok := r.executors[actionType]; ok {
+		return ex, nil
+	}
+	return nil, fmt.Errorf("unknown action type: %s", actionType)
 }
 
-// MustGet returns the executor or returns an error if not registered.
-func (r *Registry) MustGet(actionType string) (ActionExecutor, error) {
-	exec, ok := r.executors[actionType]
-	if !ok {
-		return nil, fmt.Errorf("registry: no executor registered for action type %q", actionType)
-	}
-	return exec, nil
+// Count returns the number of registered executors.
+func (r *Registry) Count() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.executors)
 }

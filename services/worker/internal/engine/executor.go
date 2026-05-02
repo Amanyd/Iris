@@ -190,6 +190,16 @@ func (e *Executor) executeNode(
 ) error {
 	nodeLog := log.With("node_id", action.NodeID, "action_type", action.ActionType)
 
+	// 0. Check conditional skipping
+	if shouldSkip(action.NodeID, g, completedOutputs) {
+		nodeLog.Info("node skipped due to upstream conditions")
+		completedOutputs.Store(action.NodeID, StepOutput{Skipped: true})
+		// Record skipped state in DB
+		stepID, _ := e.store.CreateExecutionStep(ctx, execID, action.NodeID, action.ActionType, nil)
+		_ = e.store.CompleteExecutionStep(ctx, stepID, "skipped", nil, "skipped by condition")
+		return nil
+	}
+
 	// a. Resolve secrets (_ref suffix fields)
 	resolvedConfig, err := e.resolveSecrets(ctx, action.Config, userID)
 	if err != nil {
@@ -321,4 +331,49 @@ func redactConfig(config map[string]any) map[string]any {
 		}
 	}
 	return out
+}
+
+// shouldSkip determines if a node should be skipped based on upstream edges.
+// A node is skipped if it has incoming edges and NONE of them are "live".
+// An edge is live if its parent was not skipped AND the parent's output matches the edge's Condition.
+func shouldSkip(nodeID string, g *dag.Graph, completedOutputs *sync.Map) bool {
+	inEdges := g.InEdges(nodeID)
+	if len(inEdges) == 0 {
+		return false // root nodes never skip
+	}
+
+	hasLiveEdge := false
+	for _, edge := range inEdges {
+		parentOutVal, ok := completedOutputs.Load(edge.From)
+		if !ok {
+			continue
+		}
+		parentOut := parentOutVal.(StepOutput)
+
+		if parentOut.Skipped {
+			continue // edge is dead if parent is skipped
+		}
+
+		if len(edge.Condition) == 0 {
+			hasLiveEdge = true
+			break // unconditional edge from a completed parent
+		}
+
+		// evaluate condition
+		matches := true
+		for k, v := range edge.Condition {
+			outVal, hasKey := parentOut.Output[k]
+			// compare string representations for simplicity (e.g. true == "true")
+			if !hasKey || fmt.Sprintf("%v", outVal) != fmt.Sprintf("%v", v) {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			hasLiveEdge = true
+			break
+		}
+	}
+
+	return !hasLiveEdge
 }
