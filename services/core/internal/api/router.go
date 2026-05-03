@@ -37,8 +37,9 @@ func NewRouter(h *Handler, cfg *config.Config) *chi.Mux {
 		r.Post("/auth/register", h.Register)
 		r.Post("/auth/login", h.Login)
 
-		// Internal service-to-service (no user JWT, validated by SERVICE_SECRET header)
-		r.Get("/internal/settings/{key}", h.GetSettingValue)
+		// Internal service-to-service endpoint.
+		// Protected by SERVICE_SECRET env var when set (recommended in production).
+		r.With(ServiceSecretAuth(cfg.ServiceSecret)).Get("/internal/settings/{key}", h.GetSettingValue)
 
 		// Protected endpoints
 		r.Group(func(r chi.Router) {

@@ -92,3 +92,24 @@ func (rw *responseWriter) WriteHeader(code int) {
 	rw.status = code
 	rw.ResponseWriter.WriteHeader(code)
 }
+
+// ServiceSecretAuth protects internal service-to-service routes.
+// If secret is empty (SERVICE_SECRET not set), the route is unprotected — fine for local dev.
+// In production, set SERVICE_SECRET to the same value in both iris-core and iris-telegram.
+func ServiceSecretAuth(secret string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if secret == "" {
+				// Not configured — open in dev mode
+				next.ServeHTTP(w, r)
+				return
+			}
+			auth := r.Header.Get("Authorization")
+			if auth != "Bearer "+secret {
+				writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid service secret")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}

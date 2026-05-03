@@ -28,6 +28,10 @@ type Config struct {
 
 	// ElevenLabs (optional — for the /ai/transcribe STT endpoint)
 	ElevenLabsAPIKey string
+
+	// ServiceSecret (optional) — shared secret for internal service-to-service calls.
+	// When set, the /api/v1/internal/* routes require Authorization: Bearer <secret>.
+	ServiceSecret string
 }
 
 // Load reads config from environment variables and validates required fields.
@@ -45,7 +49,8 @@ func Load() (*Config, error) {
 		LLMAPIKey:   os.Getenv("LLM_API_KEY"),
 		LLMModel:    getEnv("LLM_MODEL", "gpt-4o-mini"),
 
-		ElevenLabsAPIKey: os.Getenv("ELEVENLABS_API_KEY"), // optional
+		ElevenLabsAPIKey: os.Getenv("ELEVENLABS_API_KEY"),
+		ServiceSecret:    os.Getenv("SERVICE_SECRET"), // optional
 	}
 
 	return cfg, cfg.validate()
