@@ -1,0 +1,44 @@
+# ── Stage 1: Build all Go binaries ────────────────────────────────────────────
+FROM golang:1.24-alpine AS builder
+WORKDIR /app
+
+COPY go.work go.work.sum ./
+COPY packages/              ./packages/
+COPY services/core/         ./services/core/
+COPY services/hooks/        ./services/hooks/
+COPY services/worker/       ./services/worker/
+COPY services/iris-telegram/ ./services/iris-telegram/
+
+RUN go work sync && \
+    go build -o /bin/iris-core     ./services/core/cmd/api && \
+    go build -o /bin/iris-hooks    ./services/hooks/cmd/server && \
+    go build -o /bin/iris-worker   ./services/worker/cmd && \
+    go build -o /bin/iris-telegram ./services/iris-telegram/cmd/bot
+
+# ── Stage 2: Runtime ──────────────────────────────────────────────────────────
+FROM alpine:3.20
+
+RUN apk add --no-cache ca-certificates tzdata postgresql-client nginx
+
+# Install NATS server
+RUN wget -qO- https://github.com/nats-io/nats-server/releases/download/v2.10.24/nats-server-v2.10.24-linux-amd64.tar.gz \
+    | tar -xz --strip-components=1 -C /usr/local/bin/ nats-server-v2.10.24-linux-amd64/nats-server
+
+# Copy all binaries
+COPY --from=builder /bin/iris-core     /bin/iris-core
+COPY --from=builder /bin/iris-hooks    /bin/iris-hooks
+COPY --from=builder /bin/iris-worker   /bin/iris-worker
+COPY --from=builder /bin/iris-telegram /bin/iris-telegram
+
+# Copy migrations
+COPY services/core/db/migrations /migrations
+
+# Copy startup + nginx config
+COPY docker/start-all.sh /start-all.sh
+COPY docker/nginx-render.conf /etc/nginx/http.d/default.conf
+RUN chmod +x /start-all.sh
+
+# Render uses $PORT (defaults to 10000)
+EXPOSE 10000
+
+CMD ["/start-all.sh"]

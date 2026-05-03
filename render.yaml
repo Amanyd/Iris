@@ -1,0 +1,57 @@
+databases:
+  - name: iris-db
+    plan: free
+    databaseName: iris
+    user: iris
+
+services:
+  - type: web
+    name: iris-backend
+    runtime: docker
+    dockerfilePath: ./Dockerfile.render
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      # ── Database (auto-injected from the managed Postgres above) ──
+      - key: DATABASE_URL
+        fromDatabase:
+          name: iris-db
+          property: connectionURI
+
+      # ── Auth ──
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ENCRYPTION_KEY
+        sync: false  # user must provide a 64-char hex string
+
+      # ── AI (Gemini) ──
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: LLM_API_KEY
+        sync: false  # user must provide
+      - key: LLM_MODEL
+        value: gemini-2.0-flash
+
+      # ── ElevenLabs STT (optional) ──
+      - key: ELEVENLABS_API_KEY
+        sync: false
+
+      # ── Telegram (optional) ──
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_BOT_USERNAME
+        sync: false
+
+      # ── Frontend URL (set this after Vercel deploy) ──
+      - key: FRONTEND_URL
+        sync: false
+
+      # ── Internal ports (inside the container, not exposed) ──
+      - key: CORE_PORT
+        value: "3000"
+      - key: HOOKS_PORT
+        value: "8080"
+
+      # ── Service secret ──
+      - key: SERVICE_SECRET
+        generateValue: true
