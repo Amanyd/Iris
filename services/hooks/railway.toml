@@ -1,0 +1,6 @@
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile.hooks"
+
+[deploy]
+restartPolicyType = "on_failure"
